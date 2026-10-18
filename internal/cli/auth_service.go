@@ -35,17 +35,10 @@ paths and VINTED_PROXY of the shell that enabled it, never a credential.`,
 		if dir != "" {
 			state = dir
 		}
-		setup, err := a.engineSetup()
+		// Attaches, and holds the renewals for any cooldown recorded while no
+		// engine ran; never starts the engine during one.
+		c, err := a.openEngine(cmd.Context(), state)
 		if err != nil {
-			return err
-		}
-		c, err := galleton.Open(cmd.Context(), state, setup)
-		if err != nil {
-			return err
-		}
-		// A cooldown recorded while no engine ran must hold the renewals too.
-		if err := a.carryCooldown(cmd.Context(), c); err != nil {
-			c.Close()
 			return err
 		}
 		defer c.Close()

@@ -153,6 +153,9 @@ func (g *Gate) Path() string { return g.path }
 // Interval is the effective gap between requests.
 func (g *Gate) Interval() time.Duration { return g.interval }
 
+// Err is the configuration error that makes every request fail, if any.
+func (g *Gate) Err() error { return g.err }
+
 // state is the file. Sites are keyed by host.
 type state struct {
 	Sites map[string]*site `json:"sites"`

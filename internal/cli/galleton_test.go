@@ -89,6 +89,54 @@ func TestOtherCustomSiteCooldownLeavesTheEngineRunning(t *testing.T) {
 	h.must("", "me", "show")
 }
 
+func (h *harness) engineRunning() bool {
+	h.t.Helper()
+	return decode[map[string]any](h.t, h.must("", "auth", "service", "status").stdout)["running"] == true
+}
+
+// The engine renews due sessions the moment it starts, before a pause can
+// reach it, so during a cooldown a stopped engine stays stopped. Clearing the
+// cooldown still works, and the next command starts it again.
+func TestCooldownKeepsAStoppedEngineStopped(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.fake.setBlock("/api/v2/users/current", datadomeBlock(t))
+	if r := h.run("", "me", "show"); r.code != 5 {
+		t.Fatalf("blocked me show: exit %d\n%s", r.code, r.stderr)
+	}
+	h.fake.setBlock("", nil)
+	h.must("", "auth", "service", "stop")
+	if r := h.run("", "me", "show"); r.code != 5 {
+		t.Fatalf("me show during the cooldown: exit %d\n%s", r.code, r.stderr)
+	}
+	if h.engineRunning() {
+		t.Fatal("a command started the session engine during a cooldown")
+	}
+	h.must("", "cooldown", "clear", "--yes")
+	h.must("", "me", "show")
+	if !h.engineRunning() {
+		t.Fatal("the session engine did not start after the cooldown was cleared")
+	}
+}
+
+// A request_interval that stops every request stops the engine's renewals
+// too: no command starts the engine with it.
+func TestBadRequestIntervalKeepsTheEngineStopped(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.must("", "auth", "service", "stop")
+	cfg := filepath.Join(h.home, "config", "vinted-cli", "config.toml")
+	if err := os.WriteFile(cfg, []byte("request_interval = \"10ms\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := h.run("", "me", "show"); r.code != 2 {
+		t.Fatalf("me show with a bad interval: exit %d\n%s", r.code, r.stderr)
+	}
+	if h.engineRunning() {
+		t.Fatal("the session engine started with a request_interval every request refuses")
+	}
+}
+
 // One engine, one egress: a command with a different proxy never borrows a
 // running engine that would renew through another route.
 func TestEngineRefusesADifferentProxy(t *testing.T) {

@@ -127,6 +127,11 @@ func (a *App) sessionsClient(ctx context.Context) (*galleton.Client, error) {
 	}
 	if a.Account != nil {
 		c, err := a.galletonClient(ctx)
+		var held *engineHeldError
+		if errors.As(err, &held) {
+			// Not running and kept stopped by a cooldown: nothing to pause or resume.
+			return nil, nil
+		}
 		if err != nil {
 			return nil, managedError(err)
 		}
@@ -263,6 +268,10 @@ func (a *App) engineSetup() (galleton.Setup, error) {
 	if a.proxyErr != nil {
 		return galleton.Setup{}, a.proxyErr
 	}
+	// A bad request_interval stops every request; the engine's renewals too.
+	if err := a.Gate.Err(); err != nil {
+		return galleton.Setup{}, err
+	}
 	proxy := a.proxyURL
 	if proxy == "" {
 		// Without a configured proxy the guest requests follow HTTPS_PROXY
@@ -302,11 +311,32 @@ func (a *App) galletonClient(ctx context.Context) (*galleton.Client, error) {
 		a.sessionClient = c
 		return c, nil
 	}
+	c, err := a.openEngine(ctx, a.sessionDir())
+	if err != nil {
+		return nil, err
+	}
+	a.sessionClient = c
+	return c, nil
+}
+
+// openEngine attaches to the engine in dir, starting it if needed, and
+// pauses it for any running cooldown. The engine renews due sessions the
+// moment it starts, before a pause can reach it, so during a cooldown it is
+// only attached to, never started.
+func (a *App) openEngine(ctx context.Context, dir string) (*galleton.Client, error) {
 	setup, err := a.engineSetup()
 	if err != nil {
 		return nil, err
 	}
-	c, err := galleton.Open(ctx, a.sessionDir(), setup)
+	pauses, err := a.enginePauses()
+	if err != nil {
+		return nil, err
+	}
+	setup.NoLaunch = len(pauses) > 0
+	c, err := galleton.Open(ctx, dir, setup)
+	if errors.Is(err, galleton.ErrNotRunning) {
+		return nil, &engineHeldError{&vinted.Error{Kind: vinted.KindBlocked, Msg: "a cooldown is running, so the session engine stays stopped until it ends: once started it would renew sessions against the blocked site before it could be paused. Check `vinted cooldown status`"}}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -314,24 +344,30 @@ func (a *App) galletonClient(ctx context.Context) (*galleton.Client, error) {
 		c.Close()
 		return nil, err
 	}
-	a.sessionClient = c
 	return c, nil
 }
 
-// carryCooldown pauses a freshly attached engine for the rest of a cooldown
-// the site is in, in case the block was seen while no engine ran. It fails
-// closed: an unreadable cooldown or a failed pause keeps the engine unused.
-func (a *App) carryCooldown(ctx context.Context, c *galleton.Client) error {
+// engineHeldError is openEngine refusing to start the engine during a
+// cooldown.
+type engineHeldError struct{ err *vinted.Error }
+
+func (e *engineHeldError) Error() string { return e.err.Error() }
+func (e *engineHeldError) Unwrap() error { return e.err }
+
+// enginePauses is how long each engine provider must stay paused for the
+// cooldowns that are running.
+func (a *App) enginePauses() (map[string]time.Duration, error) {
 	// Every site's cooldown, not only this profile's: the engine renews the
 	// sessions of all profiles.
 	blocked, err := a.Gate.Cooldowns()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	current := ""
 	if u, err := url.Parse(a.Client.Base); err == nil {
 		current = u.Host
 	}
+	pauses := map[string]time.Duration{}
 	for host, until := range blocked {
 		base := "https://" + host
 		if host == current {
@@ -343,10 +379,24 @@ func (a *App) carryCooldown(ctx context.Context, c *galleton.Client) error {
 		if provider == "vinted-custom" && host != current {
 			continue
 		}
-		if d := time.Until(until); d > 0 {
-			if err := c.Pause(ctx, provider, d); err != nil {
-				return fmt.Errorf("could not pause the session engine for the cooldown on %s: %w", host, managedError(err))
-			}
+		if d := time.Until(until); d > pauses[provider] {
+			pauses[provider] = d
+		}
+	}
+	return pauses, nil
+}
+
+// carryCooldown pauses an attached engine for the rest of any running
+// cooldown, in case the block was seen while it did not watch. It fails
+// closed: an unreadable cooldown or a failed pause keeps the engine unused.
+func (a *App) carryCooldown(ctx context.Context, c *galleton.Client) error {
+	pauses, err := a.enginePauses()
+	if err != nil {
+		return err
+	}
+	for provider, d := range pauses {
+		if err := c.Pause(ctx, provider, d); err != nil {
+			return fmt.Errorf("could not pause the session engine for the cooldown on %s: %w", provider, managedError(err))
 		}
 	}
 	return nil
