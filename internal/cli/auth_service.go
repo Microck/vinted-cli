@@ -44,7 +44,10 @@ paths and VINTED_PROXY of the shell that enabled it, never a credential.`,
 			return err
 		}
 		// A cooldown recorded while no engine ran must hold the renewals too.
-		a.carryCooldown(cmd.Context(), c)
+		if err := a.carryCooldown(cmd.Context(), c); err != nil {
+			c.Close()
+			return err
+		}
 		defer c.Close()
 		tick := time.NewTicker(10 * time.Second)
 		defer tick.Stop()

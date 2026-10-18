@@ -29,9 +29,15 @@ func checkLogonEnv(env [][2]string) error {
 	// lacks but the saved environment has would still reach the task.
 	keys := append(append(append([]string{}, serviceEnvXDGKeys...), "VINTED_CONFIG"), serviceEnvURLKeys...)
 	for _, key := range keys {
-		saved, _, err := k.GetStringValue(key)
+		saved, kind, err := k.GetStringValue(key)
 		if err != nil && !errors.Is(err, registry.ErrNotExist) {
 			return err
+		}
+		if err == nil && kind == registry.EXPAND_SZ {
+			// The task sees %VAR% references expanded, like the shell does.
+			if saved, err = registry.ExpandString(saved); err != nil {
+				return err
+			}
 		}
 		if saved != want[key] {
 			return output.Usagef("the logon task starts with your saved user environment, where %s differs from this shell. Make them match (`setx %s <value>`, or remove it from the saved environment, then open a new terminal) and enable again", key, key)

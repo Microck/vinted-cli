@@ -444,13 +444,25 @@ func activeLeases(dir string) (bool, error) {
 }
 
 // IfRunning connects to an already running bundled daemon without taking a
-// lease or starting one; nil when none runs. For short calls such as a pause.
+// lease or starting one. It returns nil, nil only when no host runs; a host
+// that runs but cannot be reached is an error. For short calls (a pause).
 func IfRunning(ctx context.Context, dir string) (*Client, error) {
-	c, err := running(ctx, dir, "")
-	if err != nil {
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
-	return c, nil
+	c, err := running(ctx, dir, "")
+	if err == nil {
+		return c, nil
+	}
+	host, free, lockErr := filelock.Try(filepath.Join(dir, "host.lock"))
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	if free {
+		filelock.Release(host)
+		return nil, nil
+	}
+	return nil, err
 }
 
 // RuntimeStatus is metadata only: checking it does not start a daemon.
