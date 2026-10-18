@@ -3,7 +3,7 @@ title: Examples
 description: Search, filters, listing details and Watch events in the terminal.
 ---
 
-These examples read public listings unless they say otherwise.
+These examples read public listings unless they say otherwise. The recordings do not sign in or change account data. The Watch recording writes only to its isolated local demo database.
 
 ## Search
 
@@ -13,15 +13,20 @@ Search defaults to JSON. Pass `--format pretty` to view a table in the terminal,
 vinted search "levis 501" --price-to 30 --order newest_first --limit 8 --format pretty
 ```
 
+![Pretty search results in the terminal](/demos/search.gif)
+
 ## Find ids and apply filters
 
-Look up Brand and Catalog ids, then pass them to the filter flags. Id flags repeat.
+Look up Brand and Catalog ids, then pass them to the filter flags. Id flags repeat. `search filters` lists the option ids for a category.
 
 ```bash
 vinted brand search nike --format pretty
 vinted category list --format pretty
-vinted search "air max" --brand 53 --catalog 1242 --size 208 --condition very_good --format pretty
+vinted search filters --catalog 1819 --code size --format pretty
+vinted search "levis 501" --catalog 1819 --size 1640 --condition very_good --price-to 25 --limit 5 --format pretty
 ```
+
+![Discovering and applying size filters](/demos/filters.gif)
 
 Any catalog parameter without a flag goes through `--filter`:
 
@@ -34,18 +39,23 @@ vinted search "wool coat" --filter material_ids[]=44
 Use the item id or paste its URL from any Vinted domain.
 
 ```bash
-vinted item show 4923018331 --format pretty
-vinted item images https://www.vinted.fr/items/4923018331-levis-501
+vinted item show 10422362262 --format pretty
+vinted item images https://www.vinted.com/items/10422362262-levis-501-blue-jeans
 ```
+
+![Inspecting public listing details](/demos/item.gif)
 
 ## Track changes with a Watch
 
 Create a Watch to compare future search results. `--emit-initial` reports the current results as `item.new` events.
 
 ```bash
-vinted watch add search "levis 501" --name levis --price-to 30 --interval 30m --emit-initial --format pretty
+vinted watch add search "levis 501" --name levis --catalog 1819 --size 1640 --price-to 15 --interval 30m --emit-initial --format pretty
+vinted watch list --format pretty
 vinted watch events levis --format pretty
 ```
+
+![Creating a local Watch and listing it](/demos/watch.gif)
 
 ## Your account
 

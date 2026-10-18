@@ -13,7 +13,9 @@
 
 `vinted` is a terminal cli for vinted that lets you search the catalog with the filters the web has, watch searches, items, and members for changes, and chat with sellers, all from your own account. it compiles to one static Go binary. output is json by default so everything pipes into `jq`. `--format pretty` is for humans.
 
-[documentation](https://vinted.micr.dev/docs) | [command examples](https://vinted.micr.dev/docs/examples) | [npm](https://www.npmjs.com/package/vinted-cli) | [github](https://github.com/Microck/vinted-cli)
+[documentation](https://vinted.micr.dev/docs) | [command demos](https://vinted.micr.dev/docs/examples) | [npm](https://www.npmjs.com/package/vinted-cli) | [github](https://github.com/Microck/vinted-cli)
+
+![search demo](images/demos/search.gif)
 
 ## why
 
@@ -242,6 +244,24 @@ vinted item edit 4923018331 --price 20
 vinted item hide 4923018331
 vinted item delete 4923018331 --yes
 ```
+
+## what it looks like
+
+these recordings use public listings. the watch writes only to its isolated local demo database. see the [command demo gallery](https://vinted.micr.dev/docs/examples) for search, filters, item details, and watch events.
+
+### inspect a listing
+
+![item demo](images/demos/item.gif)
+
+### discover and apply filters
+
+![filters demo](images/demos/filters.gif)
+
+### track changes with a watch
+
+watches save a search locally; each check reports what changed.
+
+![watch demo](images/demos/watch.gif)
 
 ## sinks config
 
