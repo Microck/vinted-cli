@@ -538,6 +538,16 @@ func (a *App) keepSessionAlive(ctx context.Context) {
 	case err == nil && meta.Status != "ready" && meta.Status != "retry_wait":
 		fmt.Fprintf(a.Stderr, "vinted: the session engine reports the session as %s; run `vinted auth status --check`\n", meta.Status)
 	}
+	if err != nil {
+		return
+	}
+	// A renewal the engine ran on its own may have been blocked; no command
+	// saw it, so start the shared cooldown here.
+	if c, err := a.galletonClient(ctx); err == nil {
+		if err := a.recordEngineBlocks(ctx, c, map[string]time.Time{}); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(a.Stderr, "vinted: could not check the session engine for blocked renewals: %v\n", err)
+		}
+	}
 }
 
 func (a *App) watchRunCmd() *cobra.Command {

@@ -514,9 +514,24 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 	forget := func(id, what string) {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 		defer cancel()
-		if err := c.Forget(cleanup, id); err != nil {
-			fmt.Fprintf(a.Stderr, "vinted: could not remove the %s session %s from the engine: %v\n", what, id, managedError(err))
+		err := c.Forget(cleanup, id)
+		if err == nil {
+			return
 		}
+		// Queue it with the profile's replaced sessions, which the next
+		// command that reaches the engine deletes. A profile without a
+		// session yet has nothing to hang it on: the warning names it.
+		if s, ok := a.Creds.Profiles[a.Profile]; ok && s.GalletonID != "" && !slices.Contains(s.Replaced, id) {
+			s.Replaced = append(s.Replaced, id)
+			a.Creds.Profiles[a.Profile] = s
+			if serr := a.saveCreds(); serr == nil {
+				fmt.Fprintf(a.Stderr, "vinted: could not remove the %s session %s from the engine yet (it is retried later): %v\n", what, id, managedError(err))
+				return
+			}
+			s.Replaced = s.Replaced[:len(s.Replaced)-1]
+			a.Creds.Profiles[a.Profile] = s
+		}
+		fmt.Fprintf(a.Stderr, "vinted: could not remove the %s session %s from the engine: %v\n", what, id, managedError(err))
 	}
 	if _, err := c.Connect(ctx, id, in); err != nil {
 		// A lost answer or a cancel may hide a completed import: remove the

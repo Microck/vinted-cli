@@ -139,7 +139,9 @@ func (a *App) recordEngineBlocks(ctx context.Context, c *galleton.Client, report
 		return err
 	}
 	for _, s := range sessions {
-		if s.Status != "retry_wait" || s.Error == nil || s.Error.Code != "upstream_blocked" || reported[s.ID].Equal(s.NextRefresh) {
+		// A retry time already past is a back-off the engine is about to end
+		// with a new attempt, not a fresh block.
+		if s.Status != "retry_wait" || s.Error == nil || s.Error.Code != "upstream_blocked" || !time.Now().Before(s.NextRefresh) || reported[s.ID].Equal(s.NextRefresh) {
 			continue
 		}
 		reported[s.ID] = s.NextRefresh

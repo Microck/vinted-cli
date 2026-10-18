@@ -242,6 +242,22 @@ func TestAuthServiceRunReportsAnEngineRenewalBlock(t *testing.T) {
 	}
 }
 
+// The session keepalive of a scheduled `watch check` reports a renewal block
+// the engine hit on its own, like `auth service run` does.
+func TestWatchKeepaliveReportsAnEngineRenewalBlock(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.fake.setBlock("/web/api/auth/refresh", datadomeBlock(t))
+	if r := h.run("", "auth", "refresh"); r.code != 5 {
+		t.Fatalf("blocked renewal: exit %d\n%s", r.code, r.stderr)
+	}
+	h.must("", "cooldown", "clear", "--yes")
+	h.run("", "watch", "check")
+	if cd := decode[map[string]any](t, h.must("", "cooldown").stdout); cd["blocked"] != true {
+		t.Fatalf("watch check did not record the engine's renewal block: %v", cd)
+	}
+}
+
 // `auth service run` started during a cooldown waits for it to end instead
 // of exiting, then starts the engine.
 func TestAuthServiceRunWaitsOutACooldown(t *testing.T) {
