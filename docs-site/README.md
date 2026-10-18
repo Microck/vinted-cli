@@ -35,9 +35,9 @@ make docs-check  # what CI runs: regenerate and fail if anything moved
 
 ## Theme
 
-Colours come from Vinted's own design tokens: `#007782` (`--primary-default`) is the brand
-700 and the light-mode primary, `#449DA9` (Vinted's dark-mode primary) is brand 400 and the
-dark-mode primary. Dark mode is the default: true black `#000000` page, white text, no
-decorative chrome. The nav logo in `public/` is the `#449DA9` variant so it reads on black;
-`.github/assets/vinted-cli-logo.svg` is the `#007782` original. `app/icon.png`,
-`app/apple-icon.png`, `app/favicon.ico` and `app/opengraph-image.png` are generated from it.
+The accent is `#017681`, the fill of the vinted-cli logo, sampled from the source SVG. It
+is used for links, the active nav item, focus rings and highlights in both modes. Dark mode
+is the default and ignores the OS preference (`enableSystem: false`); the nav toggle still
+switches to light and the choice is remembered. Dark mode is a true black `#000000` page with
+white text and no decorative chrome. `app/icon.png`, `app/apple-icon.png`, `app/favicon.ico`
+and `app/opengraph-image.png` are generated from the logo.

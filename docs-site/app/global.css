@@ -4,22 +4,8 @@
 
 @source '../node_modules/fumadocs-ui/dist/**/*.js';
 
-@theme {
-  /* Vinted design tokens: primary-default #007782, dark-mode primary #449DA9. */
-  --brand-50: #e6fafa;
-  --brand-100: #c9f0ee;
-  --brand-200: #a3dfe0;
-  --brand-300: #74c4ca;
-  --brand-400: #449da9;
-  --brand-500: #1f8a96;
-  --brand-600: #0a808b;
-  --brand-700: #007782;
-  --brand-800: #005e6b;
-  --brand-900: #004654;
-  --brand-950: #112e33;
-}
-
 :root {
+  /* Accent: #017681, the vinted-cli logo fill sampled from the source SVG. */
   color-scheme: light;
 
   --color-fd-background: #ffffff;
@@ -29,11 +15,11 @@
   --color-fd-muted: #f5f5f5;
   --color-fd-muted-foreground: #555555;
   --color-fd-border: #e5e5e5;
-  --color-fd-accent: #e6fafa;
-  --color-fd-accent-foreground: #007782;
-  --color-fd-primary: #007782;
+  --color-fd-accent: #e6f4f5;
+  --color-fd-accent-foreground: #017681;
+  --color-fd-primary: #017681;
   --color-fd-primary-foreground: #ffffff;
-  --color-fd-ring: #007782;
+  --color-fd-ring: #017681;
   --color-fd-secondary: #f5f5f5;
 }
 
@@ -47,20 +33,20 @@
   --color-fd-muted: #0a0a0a;
   --color-fd-muted-foreground: #a3a3a3;
   --color-fd-border: #262626;
-  --color-fd-accent: #112e33;
-  --color-fd-accent-foreground: #449da9;
-  --color-fd-primary: #449da9;
-  --color-fd-primary-foreground: #000000;
-  --color-fd-ring: #449da9;
+  --color-fd-accent: #01262a;
+  --color-fd-accent-foreground: #ffffff;
+  --color-fd-primary: #017681;
+  --color-fd-primary-foreground: #ffffff;
+  --color-fd-ring: #017681;
   --color-fd-secondary: #0a0a0a;
 }
 
 ::selection {
-  background-color: rgb(0 119 130 / 22%);
+  background-color: rgb(1 118 129 / 22%);
 }
 
 .dark ::selection {
-  background-color: rgb(68 157 169 / 35%);
+  background-color: rgb(1 118 129 / 45%);
 }
 
 .prose {

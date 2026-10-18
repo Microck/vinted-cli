@@ -13,7 +13,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <body className="flex min-h-screen flex-col">
-        <RootProvider theme={{ defaultTheme: 'dark' }} search={{ options: { type: 'static' } }}>
+        <RootProvider theme={{ defaultTheme: 'dark', enableSystem: false }} search={{ options: { type: 'static' } }}>
           {children}
         </RootProvider>
       </body>
