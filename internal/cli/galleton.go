@@ -312,14 +312,11 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 		return err
 	}
 	a.Account.userID = me.ID
-	a.Creds.Profiles[a.Profile] = config.Session{GalletonID: id, UserID: me.ID, Login: me.Login, UpdatedAt: time.Now().UTC()}
-	if err := a.saveCreds(); err != nil {
-		forget(id, "new")
-		return fmt.Errorf("credentials.toml could not be saved, so the profile keeps its previous session: %w", err)
-	}
-	if previous != "" && previous != id {
-		forget(previous, "replaced")
-	}
+	// The profile's site goes to config.toml first: a session for one site
+	// must never be recorded next to another site's domain. Each step that
+	// fails undoes the ones before it and keeps the previous session.
+	oldDefault := a.Cfg.DefaultProfile
+	oldProfile, hadProfile := a.Cfg.Profiles[a.Profile]
 	// First profile becomes the default; the site sticks to the profile.
 	if a.Cfg.DefaultProfile == "" {
 		a.Cfg.DefaultProfile = a.Profile
@@ -333,7 +330,25 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 		a.Cfg.Profiles[a.Profile] = p
 	}
 	if err := a.saveConfig(); err != nil {
-		return err
+		forget(id, "new")
+		return fmt.Errorf("config.toml could not be saved, so the profile keeps its previous session: %w", err)
+	}
+	a.Creds.Profiles[a.Profile] = config.Session{GalletonID: id, UserID: me.ID, Login: me.Login, UpdatedAt: time.Now().UTC()}
+	if err := a.saveCreds(); err != nil {
+		a.Cfg.DefaultProfile = oldDefault
+		if hadProfile {
+			a.Cfg.Profiles[a.Profile] = oldProfile
+		} else {
+			delete(a.Cfg.Profiles, a.Profile)
+		}
+		if cerr := a.saveConfig(); cerr != nil {
+			fmt.Fprintf(a.Stderr, "vinted: could not restore config.toml: %v\n", cerr)
+		}
+		forget(id, "new")
+		return fmt.Errorf("credentials.toml could not be saved, so the profile keeps its previous session: %w", err)
+	}
+	if previous != "" && previous != id {
+		forget(previous, "replaced")
 	}
 	return a.Printer.Print(a.currentStatus())
 }

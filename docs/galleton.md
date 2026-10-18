@@ -66,9 +66,9 @@ vinted auth service disable
 ```
 
 This writes a systemd user unit on Linux, a LaunchAgent on macOS, or a logon task on Windows,
-with absolute paths and the `HOME`, `XDG_*`, `VINTED_CONFIG`, `VINTED_BASE_URL` and
-`VINTED_PROXY` of the shell that enabled it. It never contains a credential: enable refuses a
-`VINTED_PROXY` carrying one. A Windows logon task cannot carry variables; it starts with the
+with absolute paths and the `HOME`, `XDG_*`, `VINTED_CONFIG`, `VINTED_BASE_URL`,
+`VINTED_PROXY` and `HTTP(S)_PROXY`/`NO_PROXY` of the shell that enabled it. It never contains a
+credential: enable refuses a proxy variable carrying one. A Windows logon task cannot carry variables; it starts with the
 saved user environment, so enable refuses when one of those variables differs there (save it
 with `setx` first). Linux user lingering is not enabled, so this is a login service,
 not renewal while the machine is off.

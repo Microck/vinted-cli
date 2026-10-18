@@ -295,9 +295,10 @@ Watches, Checks, Events and Sinks are defined in `AGENTS.md`.
   service+timer (Linux) or a launchd agent (macOS) that runs
   `vinted watch check --all --jitter <interval/10> --profile ...`. On Windows it
   prints the `schtasks` command to run by hand. The unit pins `HOME`, the XDG variables,
-  `VINTED_CONFIG`, `VINTED_BASE_URL` and `VINTED_PROXY` as they stood at install time, because a scheduler
-  starts jobs with a bare environment. No credential is ever written: unit files are
-  world-readable, so install refuses a `VINTED_PROXY` with credentials.
+  `VINTED_CONFIG`, `VINTED_BASE_URL`, `VINTED_PROXY` and `HTTP(S)_PROXY`/`NO_PROXY` as they
+  stood at install time, because a scheduler starts jobs with a bare environment. No
+  credential is ever written: unit files are world-readable, so install refuses a proxy
+  variable with credentials.
   On Linux install also runs `loginctl enable-linger`. `status` says
   `not installed`, or what the scheduler reports. `uninstall` removes the units and the log.
   Output is appended to `$XDG_STATE_HOME/vinted-cli/vinted-watch-<profile>.log`, rotated to

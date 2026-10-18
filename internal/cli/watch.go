@@ -839,13 +839,36 @@ func (a *App) serviceCommandLine(iv time.Duration) (string, []string, error) {
 // the one they installed from, checking nothing and reporting nothing, with no
 // error anywhere. HOME is in the list because it is where the paths come from
 // when the XDG variables are unset, which is the common case.
-// No credential goes in: a unit file is world-readable. VINTED_PROXY goes
-// in, or the timer would talk to Vinted directly; install refuses one
-// carrying credentials.
+// No credential goes in: a unit file is world-readable. The proxy variables
+// go in, or the timer (and the session engine it starts) would talk to Vinted
+// directly; install refuses one carrying credentials.
 var (
-	serviceEnvXDGKeys = []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"}
-	serviceEnvURLKeys = []string{"VINTED_BASE_URL", "VINTED_PROXY"}
+	serviceEnvXDGKeys   = []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"}
+	serviceEnvProxyKeys = []string{"VINTED_PROXY", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"}
+	serviceEnvURLKeys   = append([]string{"VINTED_BASE_URL"}, serviceEnvProxyKeys...)
 )
+
+// checkServiceProxies refuses to freeze a proxy carrying credentials into a
+// world-readable unit file.
+func checkServiceProxies() error {
+	for _, k := range serviceEnvProxyKeys {
+		raw := os.Getenv(k)
+		if raw == "" || strings.HasPrefix(strings.ToLower(k), "no_proxy") {
+			continue
+		}
+		u, err := vinted.ParseProxy(raw)
+		if err != nil {
+			if k == "VINTED_PROXY" {
+				return output.Usagef("VINTED_PROXY: %v", err)
+			}
+			continue
+		}
+		if u.User != nil {
+			return output.Usagef("%s carries credentials, which would land in a world-readable unit file. Use a proxy without credentials (for example a local socks5h forwarder) for scheduled and background runs", k)
+		}
+	}
+	return nil
+}
 
 // serviceEnv freezes the current values of those variables into the unit, so
 // the scheduled run resolves the same paths as the install did. Each group has
@@ -948,14 +971,8 @@ func schtasksCreate(taskName, exe string, args []string, iv time.Duration) strin
 }
 
 func (a *App) serviceInstall(iv time.Duration) error {
-	if raw := os.Getenv("VINTED_PROXY"); raw != "" {
-		u, err := vinted.ParseProxy(raw)
-		if err != nil {
-			return output.Usagef("VINTED_PROXY: %v", err)
-		}
-		if u.User != nil {
-			return output.Usagef("VINTED_PROXY carries credentials, which would land in a world-readable unit file. Use a proxy without credentials (for example a local socks5h forwarder) for the scheduled checks")
-		}
+	if err := checkServiceProxies(); err != nil {
+		return err
 	}
 	exe, args, err := a.serviceCommandLine(iv)
 	if err != nil {

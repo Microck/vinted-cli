@@ -242,3 +242,25 @@ func contains(list []string, s string) bool {
 	}
 	return false
 }
+
+// The session engine follows HTTPS_PROXY when no proxy is configured, so a
+// unit carries it like VINTED_PROXY, and refuses it with credentials.
+func TestServiceEnvCarriesTheProxyVariables(t *testing.T) {
+	t.Setenv("VINTED_PROXY", "")
+	t.Setenv("HTTPS_PROXY", "http://proxy.lan:3128")
+	t.Setenv("NO_PROXY", "localhost")
+	got := map[string]string{}
+	for _, kv := range serviceEnv() {
+		got[kv[0]] = kv[1]
+	}
+	if got["HTTPS_PROXY"] != "http://proxy.lan:3128" || got["NO_PROXY"] != "localhost" {
+		t.Fatalf("proxy variables not carried: %v", got)
+	}
+	if err := checkServiceProxies(); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HTTPS_PROXY", "http://alice:secret@proxy.lan:3128")
+	if err := checkServiceProxies(); err == nil || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("credentialed HTTPS_PROXY accepted or echoed: %v", err)
+	}
+}

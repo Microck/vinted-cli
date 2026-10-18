@@ -15,7 +15,6 @@ import (
 	"github.com/Microck/vinted-cli/internal/config"
 	"github.com/Microck/vinted-cli/internal/galleton"
 	"github.com/Microck/vinted-cli/internal/output"
-	"github.com/Microck/vinted-cli/internal/vinted"
 	"github.com/spf13/cobra"
 )
 
@@ -145,10 +144,8 @@ func (a *App) authServiceChange(ctx context.Context, enable bool) error {
 		return output.Usagef("clear VINTED_GALLETON_* overrides to manage the bundled engine's startup")
 	}
 	if enable {
-		if raw := os.Getenv("VINTED_PROXY"); raw != "" {
-			if u, err := vinted.ParseProxy(raw); err == nil && u.User != nil {
-				return output.Usagef("VINTED_PROXY carries credentials, which would land in the service definition. Use a proxy without credentials (for example a local socks5h forwarder) for the service, or run `vinted auth service run` under a supervisor that sets VINTED_PROXY")
-			}
+		if err := checkServiceProxies(); err != nil {
+			return err
 		}
 	}
 	u, dir, err := a.authServiceUnit()
