@@ -207,11 +207,11 @@ func (a *App) engineSetup() (galleton.Setup, error) {
 	if proxy == "" {
 		// Without a configured proxy the guest requests follow HTTPS_PROXY
 		// and friends (Go's default transport); the engine ignores its
-		// environment and has one route per site, so hand it the proxy the
-		// environment picks for every origin of the site, and refuse when
-		// NO_PROXY splits them.
+		// environment and has one route for every site it serves, so hand it
+		// the proxy the environment picks for all of their origins, and
+		// refuse when NO_PROXY splits them.
 		var err error
-		if proxy, err = envProxy(vinted.Origins(a.Client.Base)); err != nil {
+		if proxy, err = envProxy(vinted.AllOrigins(a.Client.Base)); err != nil {
 			return galleton.Setup{}, err
 		}
 	}
@@ -286,7 +286,7 @@ func envProxy(origins []string) (string, error) {
 			got = p.String()
 		}
 		if i > 0 && got != choice {
-			return "", output.Usagef("NO_PROXY sends %s and %s different ways, but the session engine has one route per site. Set VINTED_PROXY, or make NO_PROXY cover both or neither", origins[0], o)
+			return "", output.Usagef("NO_PROXY sends %s and %s different ways, but the session engine has one route for every Vinted site. Set VINTED_PROXY, or make NO_PROXY cover all Vinted hosts or none", origins[0], o)
 		}
 		choice = got
 	}

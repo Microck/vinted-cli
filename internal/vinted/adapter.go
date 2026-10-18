@@ -171,6 +171,19 @@ func siteProvider(base, proxyEnv string, interval time.Duration) adapterProvider
 	return p
 }
 
+// AllOrigins are the origins of every provider Adapter(base, ...) renders:
+// every Vinted site, plus base when it is not one of them.
+func AllOrigins(base string) []string {
+	var out []string
+	for _, b := range allSites() {
+		out = append(out, Origins(b)...)
+	}
+	if Provider(base) == "vinted-custom" {
+		out = append(out, Origins(base)...)
+	}
+	return out
+}
+
 // Origins are the origins of a site whose requests carry the account's
 // cookies: the site and its API gateway.
 func Origins(base string) []string {

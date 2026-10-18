@@ -754,3 +754,27 @@ func TestDebugRedactsCookies(t *testing.T) {
 		t.Fatal("error body leaked the access token")
 	}
 }
+
+func TestAdapterCoversEverySiteWithItsGateway(t *testing.T) {
+	raw, err := Adapter(DefaultBase, "VINTED_GALLETON_PROXY", 2*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Providers []adapterProvider `json:"providers"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Providers) != len(siteLanguages)+1 {
+		t.Fatalf("%d providers for %d sites", len(doc.Providers), len(siteLanguages)+1)
+	}
+	com := doc.Providers[0]
+	if com.Name != "vinted" || com.CookieDomain != ".www.vinted.com" || com.MinIntervalMS != 2000 || com.ProxyEnv != "VINTED_GALLETON_PROXY" ||
+		strings.Join(com.Origins, " ") != "https://www.vinted.com https://api.www.vinted.com" || com.MaxRequestBodyBytes < MaxPhotoBytes {
+		t.Fatalf("www.vinted.com provider %+v", com)
+	}
+	if n := len(AllOrigins(DefaultBase)); n != 2*len(doc.Providers) {
+		t.Fatalf("AllOrigins has %d origins for %d providers", n, len(doc.Providers))
+	}
+}
