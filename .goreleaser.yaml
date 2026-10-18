@@ -5,6 +5,7 @@ project_name: vinted
 before:
   hooks:
     - go mod tidy
+    - go run ./cmd/bundle-galleton -all
 
 builds:
   - id: vinted
@@ -12,6 +13,7 @@ builds:
     # names the binary vinted, not vinted-cli.
     main: ./cmd/vinted
     binary: vinted
+    tags: [galleton_bundle]
     env:
       - CGO_ENABLED=0
     goos: [linux, darwin, windows]

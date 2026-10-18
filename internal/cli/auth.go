@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Microck/vinted-cli/internal/config"
+	"github.com/Microck/vinted-cli/internal/galleton"
 	"github.com/Microck/vinted-cli/internal/output"
 	"github.com/Microck/vinted-cli/internal/throttle"
 	"github.com/Microck/vinted-cli/internal/vinted"
@@ -20,7 +21,7 @@ import (
 
 func (a *App) authCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "auth", Short: "Log in, inspect or remove the session for a profile"}
-	cmd.AddCommand(a.authLoginCmd(), a.authStatusCmd(), a.authRefreshCmd(), a.authLogoutCmd())
+	cmd.AddCommand(a.authLoginCmd(), a.authStatusCmd(), a.authRefreshCmd(), a.authLogoutCmd(), a.authServiceCmd())
 	return cmd
 }
 
@@ -38,16 +39,21 @@ browser where you are logged in:
 
   1. Install a cookie export extension (Cookie-Editor works) and open your
      Vinted site (www.vinted.com, www.vinted.fr, www.vinted.es, ...).
-  2. Export cookies as Netscape/text or JSON and save the file, or copy the
-     browser's Cookie request header.
+  2. Export cookies as Netscape cookies.txt or JSON (Cookie-Editor,
+     EditThisCookie, DevTools and Playwright lists all work) and save the
+     file, or copy the browser's Cookie request header. A whole-browser
+     export is fine: only the Vinted site's cookies are kept.
   3. Run this command and paste the file path or the header when asked, or
      pass --cookies FILE / --cookies-stdin.
 
-The whole jar is kept in credentials.toml (mode 0600), because Vinted's
-anti-bot cookies travel with the tokens. The access token is renewed through
-Vinted's refresh endpoint when it is about to expire, and the renewed cookies
-are written back. The site comes from the cookies' domain unless --domain is
-given. Google, Apple and Facebook accounts work the same way.
+The cookies go into the bundled Galleton session engine's encrypted vault,
+never into credentials.toml. The engine renews the access token through
+Vinted's refresh endpoint before it expires, keeps the rotated cookies, and
+is the only party that ever uses the single-use refresh token. After the
+import, stop using that browser login (log out there and log in again if
+you need the website): the browser still holds the refresh token the engine
+spends. The site comes from the cookies' domain unless --domain is given.
+Google, Apple and Facebook accounts work the same way.
 
 Examples:
   vinted auth login
@@ -93,48 +99,18 @@ Examples:
 			default:
 				return output.Usagef("no cookies given. Pass --cookies FILE or --cookies-stdin (prompts need a terminal)")
 			}
-			cookies, host, err := vinted.ParseCookieExport(src)
+			export, err := vinted.ReadCookieExport(src, siteHostname(a.Client.Base))
 			if err != nil {
 				return output.Usagef("%v", err)
 			}
 			if domain == "" {
-				domain = host
+				domain = export.Site
 			}
-			domain = normalizeDomain(domain)
+			domain = vinted.NormalizeSite(domain)
 			if domain != "" && os.Getenv("VINTED_BASE_URL") == "" {
 				a.useSite("https://" + domain)
 			}
-			// Validate by reading the account. A refresh during validation
-			// updates the session in memory; it is saved below in one write.
-			a.Session = vinted.NewSession(a.Client, cookies)
-			a.Client.Session = a.Session
-			me, err := a.Client.Me(cmd.Context())
-			if err != nil {
-				return err
-			}
-			a.Creds.Profiles[a.Profile] = config.Session{
-				Cookies: a.Session.Cookies, UserID: me.ID, Login: me.Login,
-				SessionExpires: a.Session.Expires, UpdatedAt: time.Now().UTC(),
-			}
-			if err := a.saveCreds(); err != nil {
-				return err
-			}
-			// First profile becomes the default; the site sticks to the profile.
-			if a.Cfg.DefaultProfile == "" {
-				a.Cfg.DefaultProfile = a.Profile
-			}
-			if a.Cfg.Profiles == nil {
-				a.Cfg.Profiles = map[string]config.ProfileConfig{}
-			}
-			if domain != "" {
-				p := a.Cfg.Profiles[a.Profile]
-				p.Domain = domain
-				a.Cfg.Profiles[a.Profile] = p
-			}
-			if err := a.saveConfig(); err != nil {
-				return err
-			}
-			return a.Printer.Print(a.currentStatus())
+			return a.managedLogin(cmd.Context(), export, domain)
 		},
 	}
 	cmd.Flags().StringVar(&cookiesFile, "cookies", "", "path to a cookie export (Netscape, JSON, or a Cookie header)")
@@ -161,45 +137,60 @@ func openCookieFile(path string) (*os.File, error) {
 	return f, nil
 }
 
-// normalizeDomain turns a cookie domain (".vinted.fr") or a bare site
-// ("vinted.fr") into the host the web app answers on ("www.vinted.fr").
-func normalizeDomain(d string) string {
-	d = strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(d), "https://"), "http://")
-	d = strings.Trim(strings.TrimPrefix(d, "."), "/")
-	if d == "" {
-		return ""
-	}
-	if strings.HasPrefix(d, "vinted.") {
-		d = "www." + d
-	}
-	return d
-}
-
 type authStatus struct {
-	Profile        string     `json:"profile"`
-	LoggedIn       bool       `json:"logged_in"`
-	Account        string     `json:"account,omitempty"`
-	UserID         int64      `json:"user_id,omitempty"`
-	Source         string     `json:"source,omitempty"`
-	Domain         string     `json:"domain,omitempty"`
-	UpdatedAt      *time.Time `json:"updated_at,omitempty"`
-	SessionExpires *time.Time `json:"session_expires,omitempty"`
-	Valid          *bool      `json:"session_valid,omitempty"`
+	Profile   string     `json:"profile"`
+	LoggedIn  bool       `json:"logged_in"`
+	Account   string     `json:"account,omitempty"`
+	UserID    int64      `json:"user_id,omitempty"`
+	Source    string     `json:"source,omitempty"`
+	SessionID string     `json:"session_id,omitempty"`
+	Domain    string     `json:"domain,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	// Legacy is set for a profile an older vinted-cli saved; it needs a new login.
+	Legacy bool `json:"needs_login,omitempty"`
+	// Engine is the session engine's view, read only by --check and refresh.
+	Engine *engineState `json:"engine,omitempty"`
+	Valid  *bool        `json:"session_valid,omitempty"`
 	// Cooldown is set while the site is paused after a block.
 	Cooldown *throttle.Status `json:"cooldown,omitempty"`
 }
 
+// engineState is the non-secret session metadata the Galleton daemon keeps.
+type engineState struct {
+	Status        string     `json:"status"`
+	LastRefresh   *time.Time `json:"last_refresh,omitempty"`
+	NextRefresh   *time.Time `json:"next_refresh,omitempty"`
+	AccessExpires *time.Time `json:"access_expires,omitempty"`
+	Cookies       int        `json:"cookies"`
+}
+
+func engineStateOf(m galleton.Metadata) *engineState {
+	return &engineState{Status: m.Status, LastRefresh: timePtr(m.LastRefresh), NextRefresh: timePtr(m.NextRefresh), AccessExpires: timePtr(m.AccessExpiresAt), Cookies: m.CookieCount}
+}
+
 func (s authStatus) Pretty(w io.Writer, color bool) {
 	rows := [][]string{{"profile", s.Profile}}
-	if !s.LoggedIn {
+	switch {
+	case s.Legacy:
+		rows = append(rows, []string{"session", "saved by an older vinted-cli; run `vinted auth login` again"})
+	case !s.LoggedIn:
 		rows = append(rows, []string{"session", "none (run `vinted auth login`)"})
-	} else {
+	default:
 		rows = append(rows, []string{"account", strings.TrimSpace(s.Account + " " + output.Dim(idString(s.UserID), color))}, []string{"source", s.Source})
 		if s.UpdatedAt != nil {
-			rows = append(rows, []string{"updated", s.UpdatedAt.Local().Format(time.RFC3339)})
+			rows = append(rows, []string{"logged in", s.UpdatedAt.Local().Format(time.RFC3339)})
 		}
-		if s.SessionExpires != nil {
-			rows = append(rows, []string{"expires", s.SessionExpires.Local().Format(time.RFC3339)})
+		if e := s.Engine; e != nil {
+			rows = append(rows, []string{"engine", e.Status})
+			if e.LastRefresh != nil {
+				rows = append(rows, []string{"renewed", e.LastRefresh.Local().Format(time.RFC3339)})
+			}
+			if e.AccessExpires != nil {
+				rows = append(rows, []string{"expires", e.AccessExpires.Local().Format(time.RFC3339)})
+			}
+			if e.NextRefresh != nil {
+				rows = append(rows, []string{"next renewal", e.NextRefresh.Local().Format(time.RFC3339)})
+			}
 		}
 		if s.Valid != nil {
 			rows = append(rows, []string{"valid", fmt.Sprint(*s.Valid)})
@@ -227,26 +218,30 @@ func (a *App) authStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show the active profile's session",
-		Args:  cobra.NoArgs,
+		Long: `Show the active profile's session as stored locally, without contacting
+anything. --check also asks the session engine for its state and reads the
+account from Vinted, which renews the access token first when it is due.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Check first: a refresh it triggers updates the stored expiry. A
-			// cooldown is not a verdict on the session, so it fails the check.
-			var valid *bool
-			if check && a.Session != nil {
-				_, err := a.Client.Me(cmd.Context())
-				var ve *vinted.Error
-				if errors.As(err, &ve) && ve.Kind == vinted.KindBlocked {
-					return err
-				}
-				valid = new(bool)
-				*valid = err == nil
-			}
 			st := a.currentStatus()
-			st.Valid = valid
+			if !check || a.Account == nil {
+				return a.Printer.Print(st)
+			}
+			// A cooldown is not a verdict on the session, so it fails the check.
+			_, err := a.Client.Me(cmd.Context())
+			var ve *vinted.Error
+			if errors.As(err, &ve) && ve.Kind == vinted.KindBlocked {
+				return err
+			}
+			valid := err == nil
+			st.Valid = &valid
+			if meta, err := a.Account.status(cmd.Context()); err == nil {
+				st.Engine = engineStateOf(meta)
+			}
 			return a.Printer.Print(st)
 		},
 	}
-	cmd.Flags().BoolVar(&check, "check", false, "call Vinted to verify the session still works")
+	cmd.Flags().BoolVar(&check, "check", false, "ask the session engine and Vinted whether the session still works")
 	return cmd
 }
 
@@ -256,14 +251,13 @@ func (a *App) currentStatus() authStatus {
 	if cd, err := a.Gate.Status(); err == nil && cd.Blocked {
 		st.Cooldown = &cd
 	}
-	if os.Getenv("VINTED_COOKIES") != "" && a.Session != nil {
-		// Env sessions are never persisted, so the only expiry known is the
-		// one seen by this process.
-		st.LoggedIn, st.Source = true, "env VINTED_COOKIES"
-		st.UserID, st.SessionExpires = a.Session.UserID(), timePtr(a.Session.Expires)
-	} else if s, ok := a.Creds.Profiles[a.Profile]; ok {
-		st.LoggedIn, st.Source, st.Account, st.UserID = true, "credentials", s.Login, s.UserID
-		st.UpdatedAt, st.SessionExpires = timePtr(s.UpdatedAt), timePtr(s.SessionExpires)
+	if s, ok := a.Creds.Profiles[a.Profile]; ok {
+		if s.GalletonID == "" {
+			st.Legacy = true
+			return st
+		}
+		st.LoggedIn, st.Source, st.SessionID, st.Account, st.UserID = true, "galleton", s.GalletonID, s.Login, s.UserID
+		st.UpdatedAt = timePtr(s.UpdatedAt)
 	}
 	return st
 }
@@ -280,19 +274,28 @@ func (a *App) authRefreshCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "refresh",
 		Short: "Renew the access token now",
-		Long: `Renew the access token now through Vinted's refresh endpoint and store the
-renewed cookies. Commands refresh on their own shortly before expiry; this is
-for checking that the refresh token still works. It fails when Vinted has
-revoked the login, and then only a new "vinted auth login" helps.`,
+		Long: `Ask the session engine to renew the access token now through Vinted's
+refresh endpoint. It renews on its own before expiry; this is for checking
+that the refresh token still works. It fails when Vinted has revoked the
+login, and then only a new "vinted auth login" helps.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := a.requireSession(); err != nil {
 				return err
 			}
-			if err := a.Session.Refresh(cmd.Context()); err != nil {
+			// The renewal is a request to Vinted like any other: it waits for
+			// the gate, so a cooldown or the pacing applies to it too.
+			if err := a.Gate.Wait(cmd.Context()); err != nil {
 				return err
 			}
-			return a.Printer.Print(a.currentStatus())
+			if err := a.Account.Renew(cmd.Context()); err != nil {
+				return err
+			}
+			st := a.currentStatus()
+			if meta, err := a.Account.status(cmd.Context()); err == nil {
+				st.Engine = engineStateOf(meta)
+			}
+			return a.Printer.Print(st)
 		},
 	}
 }
@@ -305,6 +308,11 @@ func (a *App) authLogoutCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if _, ok := a.Creds.Profiles[a.Profile]; !ok {
 				return a.Printer.Print(authStatus{Profile: a.Profile})
+			}
+			// Forget the engine's copy first; a failure keeps the reference
+			// for a retry. This does not log the browser out.
+			if err := a.forgetManagedProfile(cmd.Context(), a.Profile); err != nil {
+				return err
 			}
 			delete(a.Creds.Profiles, a.Profile)
 			if err := a.saveCreds(); err != nil {
@@ -320,12 +328,14 @@ func (a *App) authLogoutCmd() *cobra.Command {
 // profile
 
 type profileRow struct {
-	Name           string     `json:"name"`
-	Account        string     `json:"account,omitempty"`
-	UserID         int64      `json:"user_id,omitempty"`
-	Default        bool       `json:"default"`
-	UpdatedAt      time.Time  `json:"updated_at,omitzero"`
-	SessionExpires *time.Time `json:"session_expires,omitempty"`
+	Name      string    `json:"name"`
+	Account   string    `json:"account,omitempty"`
+	UserID    int64     `json:"user_id,omitempty"`
+	Default   bool      `json:"default"`
+	SessionID string    `json:"session_id,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
+	// NeedsLogin marks a profile an older vinted-cli saved.
+	NeedsLogin bool `json:"needs_login,omitempty"`
 }
 
 type profileList []profileRow
@@ -337,13 +347,16 @@ func (l profileList) Pretty(w io.Writer, color bool) {
 		if p.Default {
 			mark = "*"
 		}
-		expires := ""
-		if p.SessionExpires != nil {
-			expires = p.SessionExpires.Local().Format(time.RFC3339)
+		login := ""
+		if !p.UpdatedAt.IsZero() {
+			login = p.UpdatedAt.Local().Format(time.RFC3339)
 		}
-		rows = append(rows, []string{mark, p.Name, p.Account, output.Dim(idString(p.UserID), color), expires})
+		if p.NeedsLogin {
+			login = "run vinted auth login"
+		}
+		rows = append(rows, []string{mark, p.Name, p.Account, output.Dim(idString(p.UserID), color), login})
 	}
-	output.Table(w, color, []string{"", "PROFILE", "ACCOUNT", "USER ID", "EXPIRES"}, rows)
+	output.Table(w, color, []string{"", "PROFILE", "ACCOUNT", "USER ID", "LOGGED IN"}, rows)
 }
 
 func (a *App) profileCmd() *cobra.Command {
@@ -355,7 +368,7 @@ func (a *App) profileCmd() *cobra.Command {
 				def := config.ResolveProfile("", a.Cfg)
 				list := profileList{}
 				for name, s := range a.Creds.Profiles {
-					list = append(list, profileRow{Name: name, Account: s.Login, UserID: s.UserID, Default: name == def, UpdatedAt: s.UpdatedAt, SessionExpires: timePtr(s.SessionExpires)})
+					list = append(list, profileRow{Name: name, Account: s.Login, UserID: s.UserID, Default: name == def, SessionID: s.GalletonID, UpdatedAt: s.UpdatedAt, NeedsLogin: s.GalletonID == ""})
 				}
 				sortProfiles(list)
 				return a.Printer.Print(list)
@@ -386,6 +399,9 @@ func (a *App) profileRemoveCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			if err := a.confirm(yes, fmt.Sprintf("Remove profile %q, its session and its watches?", name)); err != nil {
+				return err
+			}
+			if err := a.forgetManagedProfile(cmd.Context(), name); err != nil {
 				return err
 			}
 			delete(a.Creds.Profiles, name)

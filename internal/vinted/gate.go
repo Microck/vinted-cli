@@ -105,7 +105,7 @@ func retryAfter(h http.Header, now time.Time) time.Duration {
 // recording the cooldown that keeps every process away from the site. It is
 // final: nothing retries a blocked request, since every retry extends the
 // block and can get the account's session flagged.
-func (c *Client) blocked(endpoint string, resp response) error {
+func (c *Client) blocked(ctx context.Context, endpoint string, resp response) error {
 	e := &Error{Kind: KindBlocked, Status: resp.status, Endpoint: endpoint, Body: c.snippet(resp.raw)}
 	what := fmt.Sprintf("vinted's bot protection (Datadome/Cloudflare) blocked the request (HTTP %d on %s)", resp.status, endpoint)
 	if resp.status == http.StatusTooManyRequests && !isBotWall(resp.raw) {
@@ -121,6 +121,13 @@ func (c *Client) blocked(endpoint string, resp response) error {
 	e.Msg = what + ". Stop running vinted commands: the cli will not contact " + host + " for the next " + FormatWait(wait) + ", because every retry keeps the block going. Open " + c.Base + " in your normal browser; if it shows a captcha or a block page, solve it there, and if the block persists re-export your cookies with `vinted auth login`"
 	if err != nil {
 		e.Msg += fmt.Sprintf(" (the cooldown could not be saved: %v)", err)
+	}
+	// The session engine renews on its own schedule, outside the gate: pause
+	// it too, so no renewal goes out while the site is blocking us.
+	if c.Account != nil && wait > 0 {
+		if err := c.Account.Pause(ctx, wait); err != nil {
+			e.Msg += fmt.Sprintf(" (the session engine could not be paused: %v)", err)
+		}
 	}
 	e.Suggest = BlockAdvice(c.Base, wait)
 	return e

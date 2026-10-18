@@ -112,19 +112,25 @@ func TestBlockIsFinalAndRecorded(t *testing.T) {
 	}
 }
 
-func TestBlockedRefreshIsNotRetried(t *testing.T) {
+// A block on an account request records the cooldown and pauses the
+// account in the session engine for as long, so it renews nothing meanwhile.
+func TestBlockPausesTheAccount(t *testing.T) {
 	f, c := newFake(t)
 	g := &recordingGate{}
 	c.Gate = g
-	loggedIn(c, time.Now().Add(-time.Minute))
-	f.override["POST /web/api/auth/refresh"] = func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTooManyRequests)
+	acct := loggedIn(c)
+	f.override["GET /api/v2/users/current"] = func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`<html><script src="https://ct.captcha-delivery.com/c.js"></script></html>`))
 	}
 	if _, err := c.Me(context.Background()); kindOf(err) != KindBlocked {
 		t.Fatalf("err = %v", err)
 	}
-	if f.count("POST /web/api/auth/refresh") != 1 || f.count("GET /api/v2/users/current") != 0 {
-		t.Fatalf("refresh hits %d, me hits %d", f.count("POST /web/api/auth/refresh"), f.count("GET /api/v2/users/current"))
+	if f.count("GET /api/v2/users/current") != 1 || len(g.blocks) != 1 {
+		t.Fatalf("hits %d, blocks %v", f.count("GET /api/v2/users/current"), g.blocks)
+	}
+	if len(acct.pauses) != 1 || acct.pauses[0] != 6*time.Hour {
+		t.Fatalf("account pauses %v, want one of 6h", acct.pauses)
 	}
 }
 
@@ -171,7 +177,7 @@ func TestCachedGuestJarSkipsHomePage(t *testing.T) {
 
 func TestCachedCSRFIsReusedAndReplacedWhenStale(t *testing.T) {
 	f, c := newFake(t)
-	loggedIn(c, time.Now().Add(time.Hour))
+	loggedIn(c)
 	tokens := &memTokens{csrf: map[int64]string{3000000001: "stale-token-0123456789"}}
 	c.Tokens = tokens
 	f.override["POST /api/v2/user_favourites/toggle"] = func(w http.ResponseWriter, r *http.Request) {
@@ -194,7 +200,7 @@ func TestCachedCSRFIsReusedAndReplacedWhenStale(t *testing.T) {
 	// A fresh client finds the good token cached and loads no page.
 	next := New()
 	next.Base, next.Tokens = c.Base, tokens
-	loggedIn(next, time.Now().Add(time.Hour))
+	loggedIn(next)
 	if err := next.ToggleFavorite(context.Background(), 1000000001); err != nil {
 		t.Fatal(err)
 	}

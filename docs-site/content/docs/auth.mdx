@@ -1,11 +1,11 @@
 ---
 title: Authentication
-description: Import your browser cookies; the access token refreshes automatically.
+description: Import your browser cookies once; the bundled session engine keeps them renewed.
 ---
 
 Vinted has no password API worth using. Email, Google, Apple and Facebook accounts all end up
-at the same place, a pair of cookies in your browser. The CLI imports them and refreshes the
-short-lived access token itself, the same way the website does.
+at the same place, a pair of cookies in your browser. The CLI imports them into its bundled
+session engine, which renews the short-lived access token the same way the website does.
 
 <Callout type="idea" title="Why cookies">
   A password login would have to get past captcha and bot protection, and would not work for
@@ -35,15 +35,17 @@ and so on.
 <Step>
 ### Export cookies for the site
 
-Export for that domain and save the file. The CLI needs `access_token_web` and
-`refresh_token_web`; it keeps the rest of the jar too, because the bot-protection cookies
-matter as much as the tokens.
+Export for that domain and save the file. The CLI needs `refresh_token_web` (and normally
+`access_token_web` with it); it keeps the rest of the site's cookies too, because the
+bot-protection cookies matter as much as the tokens.
 
 ![Cookie-Editor feature list with the import and export option](/auth/cookie-editor-export.png)
 
 <Callout type="info" title="Formats">
-  The CLI reads Netscape format, the JSON array Cookie-Editor exports by default, or a raw
-  `name=value; name=value` cookie header.
+  The CLI reads Netscape `cookies.txt`, Cookie-Editor, EditThisCookie, DevTools and
+  Playwright JSON (bare or wrapped as `{"url": ..., "cookies": [...]}`), or a raw
+  `name=value; name=value` cookie header. A whole-browser export works: only the Vinted
+  site's cookies are kept.
 </Callout>
 </Step>
 
@@ -69,20 +71,48 @@ from.
 Login validates the session and tells you who you are, so a bad export fails at once
 rather than three commands later.
 
+<Callout type="warn" title="Log out of that browser session">
+  Right after the import the engine renews the session, which spends the refresh token your
+  browser still holds. Vinted revokes a login when a spent refresh token comes back, so log out
+  in that browser (and log in again if you want the website) to give it its own session.
+</Callout>
+
 ## Staying logged in
 
-The access token lasts about an hour. Before it runs out, the next command that needs it
-calls Vinted's refresh endpoint with `refresh_token_web` and writes the new cookies back to
-`credentials.toml`. There is no background service to run.
+The cookies live in the bundled [Galleton](https://github.com/Microck/galleton) session
+engine, an encrypted vault next to `credentials.toml`, never in the CLI itself. The engine
+renews the access token through Vinted's refresh endpoint five minutes before it expires,
+keeps the cookies Vinted sends back, and is the only party that ever spends the single-use
+refresh token. Every logged-in request goes through it.
 
 ```bash
 vinted auth status          # local metadata; works offline
-vinted auth status --check  # make an authenticated call
-vinted auth refresh         # refresh now; nonzero exit on failure
+vinted auth status --check  # ask the engine and Vinted
+vinted auth refresh         # renew now; nonzero exit on failure
 ```
+
+The engine starts with the first command that needs the account and stops ten seconds after
+the last one exits. Watch checks attach to it on every run, so a scheduled watch keeps the
+session renewed. To keep it renewing between commands, and after a reboot once you log in:
+
+```bash
+vinted auth service enable    # systemd user unit, LaunchAgent or Windows logon task
+vinted auth service status
+vinted auth service disable
+```
+
+`vinted auth service run` runs it in the foreground for a container or another supervisor;
+`vinted auth service stop` stops an idle one. The service carries the paths and `VINTED_PROXY`
+of the shell that enabled it, never a credential.
 
 Vinted can still expire or revoke the refresh token. When that happens commands exit `3` and
 you export the cookies again.
+
+<Callout type="info" title="Upgrading from an older version">
+  Versions before the session engine kept the cookies in `credentials.toml`. This one never
+  reads them: such a profile shows `needs_login`, and the next write of the file removes the
+  old cookies. Run `vinted auth login` once with a fresh export.
+</Callout>
 
 ## Profiles
 
@@ -95,32 +125,27 @@ vinted profile use alt      # change the default
 vinted search "levis 501" --profile alt
 ```
 
-## In CI
-
-Pass the raw cookie header by environment variable and no credentials file is needed:
-
-```bash
-export VINTED_COOKIES="access_token_web=...; refresh_token_web=..."
-vinted me favorites --format jsonl
-```
-
-Refreshed tokens from `VINTED_COOKIES` stay in memory and are never written to disk.
-
 ## Where things live
 
 <Files>
   <Folder name="$XDG_CONFIG_HOME/vinted-cli" defaultOpen>
     <File name="config.toml" />
     <File name="credentials.toml" />
+    <Folder name="galleton">
+      <File name="(encrypted vault, engine, API token)" />
+    </Folder>
   </Folder>
   <Folder name="$XDG_DATA_HOME/vinted-cli">
     <File name="state.db" />
   </Folder>
 </Files>
 
-The CLI writes `credentials.toml` at mode `0600`. It holds your session cookies, so treat it
-like a password and never share or commit it. Cookie and token values are redacted from every
-log line, `--debug` output and error the CLI prints.
+`credentials.toml` (mode `0600`) holds only which engine session each profile uses, the
+account id and the login. The cookies are in the encrypted vault under `galleton/` (directory
+`0700`, files `0600`). Its API token and key administer the whole vault, and encryption does
+not protect against other programs running as you, so treat the directory like a password:
+never share, commit or publicly back it up. No account cookie reaches the CLI process, so none
+can show up in a log line, `--debug` output or an error.
 
 ## Log out
 
@@ -129,4 +154,5 @@ vinted auth logout --profile alt   # keeps config and watches
 vinted profile remove alt          # removes everything for that account
 ```
 
-Logging out deletes the stored cookies. It does not sign you out of the browser.
+Logging out deletes the engine's copy of the session first, then the local reference. It does
+not sign you out of the browser.

@@ -393,7 +393,15 @@ func (c *Client) Photo(ctx context.Context, rawURL string) ([]byte, string, erro
 		}
 	}
 	c.debugf("> GET %s", c.redact(u.String()))
-	resp, err := c.HTTP.Do(req)
+	// The image CDN carries no cookies, so it may redirect within its host.
+	cdn := *c.HTTP
+	cdn.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxRedirects || req.URL.Host != via[0].URL.Host {
+			return http.ErrUseLastResponse
+		}
+		return nil
+	}
+	resp, err := cdn.Do(req)
 	if err != nil {
 		return nil, "", c.netError(endpoint, err)
 	}
@@ -406,7 +414,7 @@ func (c *Client) Photo(ctx context.Context, rawURL string) ([]byte, string, erro
 	// The CDN answers a bad or expired signature with a plain 403, which is
 	// not the bot protection; only a challenge page or a rate limit is.
 	if resp.StatusCode == http.StatusTooManyRequests || isBotWall(raw) {
-		return nil, "", c.blocked(endpoint, response{status: resp.StatusCode, header: resp.Header, raw: raw})
+		return nil, "", c.blocked(ctx, endpoint, response{status: resp.StatusCode, header: resp.Header, raw: raw})
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, "", c.statusError(endpoint, resp.StatusCode, raw)

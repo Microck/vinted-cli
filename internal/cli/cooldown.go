@@ -51,8 +51,9 @@ for it), in every process and profile on this machine: retrying while blocked
 only extends the block. Commands fail at once with exit 5 and the time left,
 without sending anything.
 
-"vinted cooldown" shows the state for the profile's site. "vinted cooldown
-clear" lifts it early. Only do that once Vinted works normally in your browser
+A logged-in profile's session engine is paused for as long, so it does not
+renew the session while the site is blocking. "vinted cooldown" shows the
+state for the profile's site. "vinted cooldown clear" lifts both early. Only do that once Vinted works normally in your browser
 again (solve any captcha there, then re-export cookies with "vinted auth login"
 if the session was blocked).
 
@@ -83,6 +84,13 @@ Examples:
 			was, err := a.Gate.Clear(cmd.Context())
 			if err != nil {
 				return err
+			}
+			// The block also paused the session engine's renewals and
+			// requests for the account; lift that pause as well.
+			if a.Account != nil {
+				if err := a.Account.resume(cmd.Context()); err != nil {
+					return err
+				}
 			}
 			return a.Printer.Print(clearedView{Cleared: was.Blocked, Was: was})
 		},

@@ -229,12 +229,12 @@ func (c *Client) ToggleFavorite(ctx context.Context, itemID int64) error {
 
 // selfID is the logged-in account id from the session's token.
 func (c *Client) selfID() (int64, error) {
-	if c.Session == nil {
+	if c.Account == nil {
 		return 0, &Error{Kind: KindAuth, Msg: "this command needs a logged-in profile. Run `vinted auth login`"}
 	}
-	id := c.Session.UserID()
+	id := c.Account.UserID()
 	if id == 0 {
-		return 0, &Error{Kind: KindAuth, Msg: "the stored cookies belong to a logged-out browser. Log in on vinted, export the cookies again and run `vinted auth login`"}
+		return 0, &Error{Kind: KindAuth, Msg: "the profile does not know its account id. Run `vinted auth login` again"}
 	}
 	return id, nil
 }

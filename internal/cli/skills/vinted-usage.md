@@ -28,7 +28,7 @@ vinted auth status --check
 vinted auth refresh
 ```
 
-The export must contain `access_token_web` and `refresh_token_web`. The access token lasts about an hour and is refreshed automatically; refreshed cookies are written back to `credentials.toml` (0600). A rejected refresh is exit 3: export the cookies again. Profiles: `--profile NAME` or `VINTED_PROFILE`. For CI, `VINTED_COOKIES` holds a raw cookie header and is never written to disk. Never print or log cookie values.
+The export must contain `refresh_token_web` (Netscape, Cookie-Editor/DevTools/Playwright JSON, or a Cookie header; a whole-browser export is fine). The cookies go into the bundled Galleton session engine's encrypted vault, never into the CLI or `credentials.toml`; the engine renews the access token itself and is the only party that spends the single-use refresh token. `vinted auth status` is offline; `--check` asks the engine and Vinted. A refused renewal is exit 3: export the cookies again. A profile saved by an older version reports `needs_login`. `vinted auth service enable` keeps the engine renewing between commands; leave that to the user. Profiles: `--profile NAME` or `VINTED_PROFILE`. Never print, log or read cookie values or the `galleton/` directory.
 
 ## Search
 
@@ -119,4 +119,4 @@ Not tools, on purpose: `chat send/start/open/offer/reserve`, `item favorite/unfa
 
 ## Config
 
-`$XDG_CONFIG_HOME/vinted-cli/config.toml`; `vinted config set watch.interval 30m`; `vinted config set request_interval 3s` (floor 1s); `vinted config set proxy socks5h://127.0.0.1:1080` (or env `VINTED_PROXY`; all traffic, never falls back to direct, exit 6 if unreachable); `vinted config path`. The Profile's site is `profiles.NAME.domain` (e.g. `www.vinted.fr`). Session cookies live in `credentials.toml` (0600), state in `$XDG_DATA_HOME/vinted-cli/state.db`, the shared cooldown/pacing file in `$XDG_STATE_HOME/vinted-cli/throttle.json`.
+`$XDG_CONFIG_HOME/vinted-cli/config.toml`; `vinted config set watch.interval 30m`; `vinted config set request_interval 3s` (floor 1s); `vinted config set proxy socks5h://127.0.0.1:1080` (or env `VINTED_PROXY`; all traffic, never falls back to direct, exit 6 if unreachable); `vinted config path`. The Profile's site is `profiles.NAME.domain` (e.g. `www.vinted.fr`). Session cookies live in the session engine's vault under `$XDG_CONFIG_HOME/vinted-cli/galleton/`; `credentials.toml` (0600) only references them, state in `$XDG_DATA_HOME/vinted-cli/state.db`, the shared cooldown/pacing file in `$XDG_STATE_HOME/vinted-cli/throttle.json`.

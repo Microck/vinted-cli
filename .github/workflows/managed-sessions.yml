@@ -1,0 +1,60 @@
+name: managed-sessions
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build verified native engine
+        run: go run ./cmd/bundle-galleton
+      - name: Real engine lifecycle and TLS renewal
+        run: go test -tags galleton_bundle ./internal/galleton ./internal/config -count=1 -timeout=120s
+      - name: CLI against the bundled engine
+        if: runner.os != 'Windows'
+        run: go test -tags galleton_bundle ./internal/cli -count=1 -timeout=600s
+      - name: Plain Go install preparation
+        if: runner.os == 'Linux'
+        env:
+          VINTED_TEST_SOURCE_BUILD: "1"
+        run: go test ./internal/galleton -run TestSourceBuildPreparesPinnedEngine -count=1 -timeout=120s
+      - name: Race checks
+        if: runner.os == 'Linux'
+        run: go test -race -tags galleton_bundle ./... -count=1 -timeout=900s
+      - name: Bundled CLI
+        run: go build -tags galleton_bundle -o vinted-test${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/vinted
+
+  release-bundles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Prepare all six pinned engine builds
+        run: go run ./cmd/bundle-galleton -all
+      - name: Cross-compile each self-contained CLI
+        run: |
+          for os in linux darwin windows; do
+            for arch in amd64 arm64; do
+              GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -tags galleton_bundle -o "/tmp/vinted-$os-$arch" ./cmd/vinted
+            done
+          done
+      - name: Check GoReleaser configuration
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          args: check

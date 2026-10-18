@@ -114,8 +114,8 @@ func (c *Client) Conversation(ctx context.Context, id int64) (Conversation, erro
 
 func (c *Client) normalizeConversation(r rawConversation) Conversation {
 	var me int64
-	if c.Session != nil {
-		me = c.Session.UserID()
+	if c.Account != nil {
+		me = c.Account.UserID()
 	}
 	conv := Conversation{
 		ID:          int64(r.ID),

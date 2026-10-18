@@ -93,8 +93,9 @@ func (v installView) Pretty(w io.Writer, color bool) {
 // it printed. Tools are defined as argv, so what the agent reads is literally
 // what the command prints; there is no second rendering path to drift.
 //
-// Each call builds a fresh App: config, credentials and a rotated session are
-// re-read, so a long-running server does not serve a stale account.
+// Each call builds a fresh App: config and credentials are re-read, so a
+// long-running server does not serve a stale account. The session engine
+// lease is per call too.
 func (a *App) runCommand(ctx context.Context, argv []string) mcp.Result {
 	var out bytes.Buffer
 	sub := &App{
@@ -121,6 +122,9 @@ func (a *App) runCommand(ctx context.Context, argv []string) mcp.Result {
 	cmd, err := root.ExecuteContextC(ctx)
 	if sub.store != nil {
 		sub.store.Close() // one server run does many checks; do not leak handles
+	}
+	if sub.sessionClient != nil {
+		sub.sessionClient.Close() // release the session engine lease
 	}
 	if err == nil {
 		return mcp.Result{Stdout: out.String()}

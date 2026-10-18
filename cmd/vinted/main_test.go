@@ -20,7 +20,7 @@ func TestBinaryContract(t *testing.T) {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
-	env := append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir(), "XDG_DATA_HOME="+t.TempDir(), "XDG_STATE_HOME="+t.TempDir(), "VINTED_PROFILE=", "VINTED_COOKIES=")
+	env := append(os.Environ(), "XDG_CONFIG_HOME="+t.TempDir(), "XDG_DATA_HOME="+t.TempDir(), "XDG_STATE_HOME="+t.TempDir(), "VINTED_PROFILE=")
 
 	run := func(args ...string) (string, string, int) {
 		cmd := exec.Command(bin, args...)

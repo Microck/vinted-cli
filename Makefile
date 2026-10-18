@@ -1,7 +1,10 @@
 .PHONY: build test check fmt vet lint install docs docs-check
 
+# build and install embed the pinned Galleton session engine; a plain
+# `go install` instead builds it with the Go toolchain on first login.
 build:
-	go build -o bin/vinted ./cmd/vinted
+	go run ./cmd/bundle-galleton
+	go build -tags galleton_bundle -o bin/vinted ./cmd/vinted
 
 test:
 	go test ./... -count=1
@@ -29,4 +32,5 @@ docs-check: docs
 	test -z "$$(git ls-files --others --exclude-standard -- docs-site/content/docs/reference)"
 
 install:
-	go install -ldflags "-X main.version=$$(git describe --tags --always --dirty)" ./cmd/vinted
+	go run ./cmd/bundle-galleton
+	go install -tags galleton_bundle -ldflags "-X main.version=$$(git describe --tags --always --dirty)" ./cmd/vinted

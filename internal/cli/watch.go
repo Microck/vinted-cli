@@ -522,17 +522,21 @@ service units pass a tenth of their interval.`,
 	return cmd
 }
 
-// keepSessionAlive refreshes the access token once per check run when a stored
-// session is close to expiry. Watches read public data, so a scheduled timer
-// would otherwise never refresh and the stored login would go stale. A token
-// that is still fresh costs nothing. Failure is a warning: the watches
-// themselves ran. An env session is skipped: its refresh is never persisted.
+// keepSessionAlive attaches to the session engine once per check run, so its
+// scheduler renews a stored session that is due while the check runs (and for
+// the engine's short idle grace after it). Watches read public data, so a
+// scheduled timer would otherwise leave the login to go stale. Failure is a
+// warning: the watches themselves ran.
 func (a *App) keepSessionAlive(ctx context.Context) {
-	if a.Session == nil || os.Getenv("VINTED_COOKIES") != "" {
+	if a.Account == nil {
 		return
 	}
-	if _, err := a.Session.AccessToken(ctx); err != nil && ctx.Err() == nil {
+	meta, err := a.Account.status(ctx)
+	switch {
+	case err != nil && ctx.Err() == nil:
 		fmt.Fprintf(a.Stderr, "vinted: session keepalive failed: %v\n", err)
+	case err == nil && meta.Status != "ready" && meta.Status != "retry_wait":
+		fmt.Fprintf(a.Stderr, "vinted: the session engine reports the session as %s; run `vinted auth status --check`\n", meta.Status)
 	}
 }
 
@@ -835,9 +839,9 @@ func (a *App) serviceCommandLine(iv time.Duration) (string, []string, error) {
 // the one they installed from, checking nothing and reporting nothing, with no
 // error anywhere. HOME is in the list because it is where the paths come from
 // when the XDG variables are unset, which is the common case.
-// VINTED_COOKIES is deliberately absent: it is a secret, and a unit
-// file is world-readable. VINTED_PROXY goes in, or the timer would talk to
-// Vinted directly; install refuses one carrying credentials.
+// No credential goes in: a unit file is world-readable. VINTED_PROXY goes
+// in, or the timer would talk to Vinted directly; install refuses one
+// carrying credentials.
 var (
 	serviceEnvXDGKeys = []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"}
 	serviceEnvURLKeys = []string{"VINTED_BASE_URL", "VINTED_PROXY"}

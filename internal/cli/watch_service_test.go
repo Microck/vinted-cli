@@ -20,10 +20,10 @@ import (
 
 var checkArgs = []string{"watch", "check", "--all", "--profile", "default", "--format", "jsonl"}
 
-func TestServiceEnvCarriesThePathVariablesButNotTheSessionSecret(t *testing.T) {
+func TestServiceEnvCarriesThePathVariablesButNotTheEngineToken(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", "/home/u/state")
 	t.Setenv("XDG_DATA_HOME", "")
-	t.Setenv("VINTED_COOKIES", "secret-cookie")
+	t.Setenv("VINTED_GALLETON_TOKEN_FILE", "/secret/api.token")
 	got := map[string]string{}
 	for _, kv := range serviceEnv() {
 		got[kv[0]] = kv[1]
@@ -34,8 +34,8 @@ func TestServiceEnvCarriesThePathVariablesButNotTheSessionSecret(t *testing.T) {
 	if _, ok := got["XDG_DATA_HOME"]; ok {
 		t.Fatal("an unset variable must stay unset in the unit, not become an empty path")
 	}
-	if _, ok := got["VINTED_COOKIES"]; ok {
-		t.Fatal("the session secret must never be written into a unit file")
+	if _, ok := got["VINTED_GALLETON_TOKEN_FILE"]; ok {
+		t.Fatal("the engine's API token location must never be written into a unit file")
 	}
 }
 

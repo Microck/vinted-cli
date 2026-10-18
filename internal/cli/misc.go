@@ -261,7 +261,7 @@ would be refused) and doctor exits 5. Any other failed check exits 1.`,
 				} else {
 					add("site reachable", nil, a.Client.Base)
 				}
-				if a.Session == nil {
+				if a.Account == nil {
 					add("session", fmt.Errorf("profile %q has no session", a.Profile), "")
 				} else if me, err := a.Client.Me(ctx); err != nil {
 					add("session", err, "")

@@ -38,13 +38,15 @@ extends the block.
 
 The block starts a **6 hour cooldown** for that site (longer when Vinted's `Retry-After`
 asks for it). Until it ends, every command, in every process and profile, fails at once with
-exit `5` and the time left, without sending anything.
+exit `5` and the time left, without sending anything. When the blocked request was a logged-in
+one, the session engine is paused for as long too, so it sends no token renewal while the
+site is blocking you; the pause survives an engine restart.
 
 ```bash
 vinted cooldown              # site, blocked until, time left, cause
 vinted doctor                # shows it too, and skips its network checks
 vinted auth status           # has a "cooldown" field while it lasts
-vinted cooldown clear --yes  # lift it early
+vinted cooldown clear --yes  # lift it (and the engine pause) early
 ```
 
 <Callout type="warn" title="Clear it only when Vinted works again">
@@ -101,14 +103,16 @@ VINTED_PROXY=http://proxy.lan:3128 vinted search "levis 501"
 ```
 
 `http`, `https`, `socks5` and `socks5h` work; with `socks5h` the proxy resolves Vinted's host
-names, so no DNS query leaves your machine directly. All Vinted traffic, the token refresh
-included, goes through the proxy. If the proxy is unreachable the request fails with exit `6`;
+names, so no DNS query leaves your machine directly. All Vinted traffic, the session engine's
+token renewals included, goes through the proxy. A running engine keeps the proxy it started
+with, and a command configured with a different one refuses to use it until the engine stops
+(`vinted auth service stop`). If the proxy is unreachable the request fails with exit `6`;
 the CLI never falls back to a direct connection. An invalid proxy URL fails every request with
 exit `2`. `vinted doctor` shows the proxy in use, without credentials.
 
 config.toml is world-readable, so `config set` refuses a proxy URL with a password. Put one
-with credentials in `VINTED_PROXY`; `watch service install` refuses it too, since unit files
-are world-readable as well.
+with credentials in `VINTED_PROXY`; `watch service install` and `auth service enable` refuse
+it too, since unit files are world-readable as well.
 
 <Callout type="info" title="Still not invisible">
   None of this makes automated use undetectable. Vinted can still block the session; the CLI

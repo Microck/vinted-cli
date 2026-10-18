@@ -97,8 +97,6 @@ func (f *fakeVinted) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serve("reply.json")
 	case key == "POST /api/v2/user_favourites/toggle":
 		_, _ = w.Write([]byte(`{"code":0}`))
-	case key == "POST /web/api/auth/refresh":
-		serve("refresh.json")
 	default:
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte("<!DOCTYPE html><html><body>not found</body></html>"))
@@ -121,10 +119,60 @@ func jsonString(n int64) string {
 	return string(b)
 }
 
-func loggedIn(c *Client, exp time.Time) *Session {
-	s := NewSession(c, map[string]string{AccessCookie: testJWT(3000000001, exp), RefreshCookie: "refresh-1", "datadome": "dd-1"})
-	c.Session = s
-	return s
+// testAccount stands in for the session engine: it attaches a fixed cookie
+// jar, never rotates it, and records renewals and pauses.
+type testAccount struct {
+	mu     sync.Mutex
+	cookie string
+	renews int
+	pauses []time.Duration
+	renew  func() error
+}
+
+func (a *testAccount) Send(ctx context.Context, method, rawURL string, header http.Header, body []byte) (int, http.Header, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, strings.NewReader(string(body)))
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	req.Header = header.Clone()
+	if req.Header.Get("Cookie") != "" {
+		return 0, nil, nil, errors.New("the client sent its own cookies on an account request")
+	}
+	req.Header.Set("Cookie", a.cookie)
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	return resp.StatusCode, resp.Header, raw, err
+}
+
+func (a *testAccount) Renew(context.Context) error {
+	a.mu.Lock()
+	a.renews++
+	renew := a.renew
+	a.mu.Unlock()
+	if renew != nil {
+		return renew()
+	}
+	return nil
+}
+
+func (a *testAccount) Pause(_ context.Context, d time.Duration) error {
+	a.mu.Lock()
+	a.pauses = append(a.pauses, d)
+	a.mu.Unlock()
+	return nil
+}
+
+func (a *testAccount) UserID() int64 { return 3000000001 }
+
+func loggedIn(c *Client) *testAccount {
+	a := &testAccount{cookie: AccessCookie + "=" + testJWT(3000000001, time.Now().Add(time.Hour)) + "; " + RefreshCookie + "=refresh-1; datadome=dd-1"}
+	c.Account = a
+	return a
 }
 
 func kindOf(err error) Kind {
@@ -311,47 +359,54 @@ func TestParseRefs(t *testing.T) {
 	}
 }
 
-func TestParseCookieExport(t *testing.T) {
+func TestReadCookieExport(t *testing.T) {
 	cases := map[string]string{"cookies_netscape.txt": "www.vinted.fr", "cookies.json": "www.vinted.es", "cookies_header.txt": ""}
-	for name, wantHost := range cases {
+	for name, wantSite := range cases {
 		f, err := os.Open(filepath.Join("testdata", name))
 		if err != nil {
 			t.Fatal(err)
 		}
-		cookies, host, err := ParseCookieExport(f)
+		export, err := ReadCookieExport(f)
 		f.Close()
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if host != wantHost || cookies[RefreshCookie] != "fake-refresh-token" || cookies["datadome"] != "fake-datadome" || cookies[AccessCookie] == "" {
-			t.Fatalf("%s: host=%q cookies=%v", name, host, cookies)
+		values := map[string]string{}
+		for _, c := range export.Cookies {
+			values[c.Name] = c.Value
 		}
-		s := NewSession(New(), cookies)
-		if s.UserID() != 3000000001 || s.Expires.Year() != 2100 {
-			t.Fatalf("%s: uid=%d exp=%v", name, s.UserID(), s.Expires)
+		if export.Site != wantSite || values[RefreshCookie] != "fake-refresh-token" || values["datadome"] != "fake-datadome" || values[AccessCookie] == "" {
+			t.Fatalf("%s: site=%q cookies=%v", name, export.Site, values)
+		}
+		if export.AccessExpires.Year() != 2100 {
+			t.Fatalf("%s: access expiry %v", name, export.AccessExpires)
 		}
 	}
-	wrapped := `{"cookies":[{"name":"refresh_token_web","value":"r","domain":"www.vinted.it"}]}`
-	if c, host, err := ParseCookieExport(strings.NewReader(wrapped)); err != nil || host != "www.vinted.it" || c[RefreshCookie] != "r" {
-		t.Fatalf("wrapped json: %v %q %v", c, host, err)
-	}
-	// Cookie-Editor's wrapper: the site comes from url, even when the cookies
-	// sit on the parent domain. All values are synthetic.
+	// Cookie-Editor's wrapper: the site comes from the token cookies' domain.
+	// All values are synthetic.
 	editor := `{"url":"https://www.vinted.com","cookies":[` +
-		`{"domain":".vinted.com","name":"access_token_web","value":"` + testJWT(3000000001, time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)) + `","httpOnly":false,"expirationDate":4102444800,"path":"/","secure":true},` +
-		`{"domain":".vinted.com","name":"refresh_token_web","value":"synthetic-refresh","httpOnly":true,"expirationDate":4102444800,"hostOnly":false},` +
-		`{"domain":"www.vinted.com","name":"datadome","value":"synthetic-dd","httpOnly":false,"session":false}]}`
-	c, host, err := ParseCookieExport(strings.NewReader(editor))
-	if err != nil || host != "www.vinted.com" || c[RefreshCookie] != "synthetic-refresh" || c["datadome"] != "synthetic-dd" {
-		t.Fatalf("cookie-editor wrapper: %v %q %v", c, host, err)
+		`{"domain":".www.vinted.com","name":"access_token_web","value":"` + testJWT(3000000001, time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)) + `","httpOnly":false,"expirationDate":4102444800,"path":"/","secure":true},` +
+		`{"domain":".www.vinted.com","name":"refresh_token_web","value":"synthetic-refresh","httpOnly":true,"expirationDate":4102444800,"hostOnly":false},` +
+		`{"domain":".vinted.com","name":"datadome","value":"synthetic-dd","httpOnly":false,"session":false},` +
+		`{"domain":".example.com","name":"other","value":"elsewhere"}]}`
+	export, err := ReadCookieExport(strings.NewReader(editor))
+	if err != nil || export.Site != "www.vinted.com" {
+		t.Fatalf("cookie-editor wrapper: %+v %v", export, err)
 	}
-	if s := NewSession(New(), c); s.UserID() != 3000000001 {
-		t.Fatalf("cookie-editor wrapper: uid %d", s.UserID())
+	kept := map[string]bool{}
+	for _, c := range export.For(DefaultBase) {
+		kept[c.Name] = true
 	}
-	if _, _, err := ParseCookieExport(strings.NewReader("foo=bar; baz=qux")); err == nil {
+	if !kept[RefreshCookie] || !kept["datadome"] || kept["other"] {
+		t.Fatalf("export narrowed to www.vinted.com: %v", kept)
+	}
+	if got := export.For("https://www.vinted.fr"); len(got) != 0 {
+		t.Fatalf("www.vinted.com cookies offered to www.vinted.fr: %v", got)
+	}
+	if _, err := ReadCookieExport(strings.NewReader("foo=bar; baz=qux")); err == nil {
 		t.Fatal("expected an error without vinted tokens")
 	}
-	if _, _, err := ParseCookieExport(strings.NewReader("[{bad json")); err == nil {
+	if _, err := ReadCookieExport(strings.NewReader("[{bad json")); err == nil {
 		t.Fatal("expected an error for broken json")
 	}
 }
@@ -425,14 +480,14 @@ func TestUsersAndCatalogs(t *testing.T) {
 
 func TestLoggedInCalls(t *testing.T) {
 	f, c := newFake(t)
-	loggedIn(c, time.Now().Add(time.Hour))
+	loggedIn(c)
 	ctx := context.Background()
 	me, err := c.Me(ctx)
 	if err != nil || me.ID != 3000000001 || me.Login != "sample_me" || me.PhoneVerified == nil || *me.PhoneVerified {
 		t.Fatalf("me=%+v err=%v", me, err)
 	}
 	if h := f.headers["GET /api/v2/users/current"].Get("Cookie"); !strings.Contains(h, "refresh_token_web=refresh-1") || !strings.Contains(h, "datadome=dd-1") {
-		t.Fatalf("cookie header lacks jar entries")
+		t.Fatalf("the account's cookies did not reach vinted")
 	}
 	favs, err := c.Favorites(ctx, 1)
 	if err != nil || len(favs.Items) != 1 {
@@ -469,7 +524,7 @@ func TestAuthRequired(t *testing.T) {
 
 func TestChat(t *testing.T) {
 	f, c := newFake(t)
-	loggedIn(c, time.Now().Add(time.Hour))
+	loggedIn(c)
 	ctx := context.Background()
 	inbox, err := c.Inbox(ctx, 1, 20)
 	if err != nil || len(inbox) != 2 || !inbox[0].Unread || inbox[0].WithUser.Login != "sample_seller" || inbox[0].LastMessage != "Is it still available?" {
@@ -497,7 +552,7 @@ func TestChat(t *testing.T) {
 
 func TestStartConversation(t *testing.T) {
 	f, c := newFake(t)
-	loggedIn(c, time.Now().Add(time.Hour))
+	loggedIn(c)
 	f.override["POST /api/v2/conversations"] = func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"conversation":{"id":6000000001},"code":0}`))
 	}
@@ -561,7 +616,7 @@ func TestEditFormKeepsStoredColours(t *testing.T) {
 
 func TestEditItemReportsSubmittedValues(t *testing.T) {
 	f, c := newFake(t)
-	loggedIn(c, time.Now().Add(time.Hour))
+	loggedIn(c)
 	f.override["GET /api/v2/item_upload/items/5"] = func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"item":{"id":5,"title":"Old","price":{"amount":"10.0","currency_code":"USD"},"is_hidden":true,"color1_id":1}}`))
 	}
@@ -585,7 +640,7 @@ func TestEditItemReportsSubmittedValues(t *testing.T) {
 
 func TestInboxVerificationRequired(t *testing.T) {
 	f, c := newFake(t)
-	loggedIn(c, time.Now().Add(time.Hour))
+	loggedIn(c)
 	f.override["GET /api/v2/inbox"] = func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write(fixture(t, "error_115.json"))
@@ -600,98 +655,26 @@ func TestInboxVerificationRequired(t *testing.T) {
 	}
 }
 
-func TestRefreshBeforeExpiryRotatesAndPersists(t *testing.T) {
+// The client never renews by itself: a guest page handing out tokens goes
+// to the Account (the engine keeps only renewals' tokens), and nothing in
+// this process calls the refresh endpoint.
+func TestAccountRequestsNeverCallRefresh(t *testing.T) {
 	f, c := newFake(t)
-	s := loggedIn(c, time.Now().Add(30*time.Second))
-	var rotated map[string]string
-	var rotatedExp time.Time
-	s.OnRotate = func(cookies map[string]string, exp time.Time) { rotated, rotatedExp = cookies, exp }
-	if _, err := c.Me(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if f.count("POST /web/api/auth/refresh") != 1 {
-		t.Fatalf("refresh hits = %d", f.count("POST /web/api/auth/refresh"))
-	}
-	if rotated[RefreshCookie] != "fake-refresh-token-rotated" || rotated[AccessCookie] == "" || s.Expires.Year() != 2100 || !rotatedExp.Equal(s.Expires) {
-		t.Fatalf("rotated=%v exp=%v expires=%v", rotated, rotatedExp, s.Expires)
-	}
-	if _, ok := rotated["datadome"]; ok {
-		t.Fatal("unchanged cookies must not be handed to OnRotate")
-	}
-	if h := f.headers["POST /web/api/auth/refresh"].Get("Cookie"); !strings.Contains(h, "refresh_token_web=refresh-1") {
-		t.Fatal("refresh did not send the refresh cookie")
-	}
-}
-
-// A long-running process holding a refresh token another process already
-// spent must not write it back when an unrelated cookie rotates.
-func TestRotateHandsOnlyChangedCookies(t *testing.T) {
-	f, c := newFake(t)
-	s := loggedIn(c, time.Now().Add(time.Hour))
-	f.override["GET /api/v2/users/current"] = func(w http.ResponseWriter, r *http.Request) {
-		http.SetCookie(w, &http.Cookie{Name: "datadome", Value: "dd-2"})
-		_, _ = w.Write(fixture(t, "users_current.json"))
-	}
-	var rotated map[string]string
-	var rotatedExp time.Time
-	s.OnRotate = func(cookies map[string]string, exp time.Time) { rotated, rotatedExp = cookies, exp }
-	if _, err := c.Me(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(rotated) != 1 || rotated["datadome"] != "dd-2" || !rotatedExp.IsZero() {
-		t.Fatalf("rotated=%v exp=%v", rotated, rotatedExp)
-	}
-}
-
-// The fake home page hands out a guest access token, as Vinted does to a
-// request it does not recognise as logged in; it must not replace the login.
-func TestGuestTokensDoNotReplaceLogin(t *testing.T) {
-	_, c := newFake(t)
-	s := loggedIn(c, time.Now().Add(time.Hour))
-	before := s.Cookies[AccessCookie]
-	s.OnRotate = func(map[string]string, time.Time) { t.Error("guest tokens must not be persisted") }
+	loggedIn(c)
 	if _, _, err := c.csrfToken(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if s.Cookies[AccessCookie] != before || s.UserID() != 3000000001 {
-		t.Fatal("guest access token replaced the logged-in one")
+	if _, err := c.Me(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.count("POST " + RefreshPath); n != 0 {
+		t.Fatalf("the client called the refresh endpoint %d times", n)
 	}
 }
 
-func TestRefreshIsSingleFlight(t *testing.T) {
+func TestUnauthorizedRetriesOnceAfterRenewal(t *testing.T) {
 	f, c := newFake(t)
-	loggedIn(c, time.Now().Add(-time.Minute))
-	var wg sync.WaitGroup
-	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if _, err := c.UnreadCount(context.Background()); err != nil {
-				t.Error(err)
-			}
-		}()
-	}
-	wg.Wait()
-	if n := f.count("POST /web/api/auth/refresh"); n != 1 {
-		t.Fatalf("refresh ran %d times; a spent refresh token must never be replayed", n)
-	}
-}
-
-func TestRefreshRejectedIsAuth(t *testing.T) {
-	f, c := newFake(t)
-	loggedIn(c, time.Now().Add(-time.Minute))
-	f.override["POST /web/api/auth/refresh"] = func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write(fixture(t, "refresh_400.json"))
-	}
-	if _, err := c.Me(context.Background()); kindOf(err) != KindAuth {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestUnauthorizedRetriesOnceAfterRefresh(t *testing.T) {
-	f, c := newFake(t)
-	loggedIn(c, time.Now().Add(time.Hour))
+	acct := loggedIn(c)
 	calls := 0
 	f.override["GET /api/v2/conversations/stats"] = func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -705,109 +688,49 @@ func TestUnauthorizedRetriesOnceAfterRefresh(t *testing.T) {
 	if n, err := c.UnreadCount(context.Background()); err != nil || n != 2 {
 		t.Fatalf("n=%d err=%v", n, err)
 	}
-	if f.count("POST /web/api/auth/refresh") != 1 || calls != 2 {
-		t.Fatalf("refresh=%d calls=%d", f.count("POST /web/api/auth/refresh"), calls)
+	if acct.renews != 1 || calls != 2 {
+		t.Fatalf("renews=%d calls=%d", acct.renews, calls)
 	}
 }
 
-type memStore struct {
-	mu      sync.Mutex
-	jar     map[string]string
-	saved   int
-	locked  bool
-	lockErr error
-	saveErr error
-}
-
-func (m *memStore) Lock(ctx context.Context) (func(), error) {
-	m.mu.Lock()
-	m.locked = true
-	return func() { m.locked = false; m.mu.Unlock() }, m.lockErr
-}
-func (m *memStore) Load() (map[string]string, error) { return m.jar, nil }
-func (m *memStore) Save(c map[string]string, exp time.Time) error {
-	if !m.locked {
-		return errors.New("save outside lock")
-	}
-	if m.saveErr != nil {
-		return m.saveErr
-	}
-	m.jar, m.saved = c, m.saved+1
-	return nil
-}
-
-func TestStoreRefreshSavesUnderLock(t *testing.T) {
+func TestRenewalFailureEndsTheCall(t *testing.T) {
 	f, c := newFake(t)
-	s := loggedIn(c, time.Now().Add(-time.Minute))
-	store := &memStore{jar: map[string]string{AccessCookie: s.Cookies[AccessCookie], RefreshCookie: "refresh-1"}}
-	s.Store = store
-	s.OnRotate = func(map[string]string, time.Time) { t.Error("OnRotate must not run inside a Store-guarded refresh") }
-	if _, err := c.Me(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if store.saved != 1 || store.jar[RefreshCookie] != "fake-refresh-token-rotated" || f.count("POST /web/api/auth/refresh") != 1 {
-		t.Fatalf("saved=%d jar=%v", store.saved, store.jar)
-	}
-}
-
-// Vinted has already rotated the pair when Save fails: memory must keep
-// matching disk, the error must say a new login is likely needed, and the
-// spent refresh token must never be sent again.
-func TestStoreRefreshSaveFailureDoesNotAdopt(t *testing.T) {
-	f, c := newFake(t)
-	s := loggedIn(c, time.Now().Add(-time.Minute))
-	oldAccess := s.Cookies[AccessCookie]
-	store := &memStore{jar: map[string]string{AccessCookie: oldAccess, RefreshCookie: "refresh-1"}, saveErr: errors.New("disk full")}
-	s.Store = store
-	_, err := c.Me(context.Background())
-	if kindOf(err) != KindAuth || !strings.Contains(err.Error(), "disk full") || !strings.Contains(err.Error(), "vinted auth login") {
-		t.Fatalf("err = %v", err)
-	}
-	if s.Cookies[AccessCookie] != oldAccess || s.Cookies[RefreshCookie] != "refresh-1" {
-		t.Fatalf("rotated pair adopted in memory although Save failed: %v", s.Cookies)
+	acct := loggedIn(c)
+	acct.renew = func() error { return &Error{Kind: KindAuth, Msg: "run `vinted auth login`"} }
+	f.override["GET /api/v2/users/current"] = func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write(fixture(t, "error_100.json"))
 	}
 	if _, err := c.Me(context.Background()); kindOf(err) != KindAuth {
-		t.Fatalf("second call err = %v", err)
-	}
-	if n := f.count("POST /web/api/auth/refresh"); n != 1 {
-		t.Fatalf("refresh ran %d times; the spent refresh token was replayed", n)
-	}
-}
-
-func TestStoreAdoptsTokenRotatedElsewhere(t *testing.T) {
-	f, c := newFake(t)
-	s := loggedIn(c, time.Now().Add(-time.Minute))
-	fresh := testJWT(3000000001, time.Now().Add(time.Hour))
-	s.Store = &memStore{jar: map[string]string{AccessCookie: fresh, RefreshCookie: "refresh-2", "datadome": "dd-2"}}
-	if _, err := c.Me(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if f.count("POST /web/api/auth/refresh") != 0 {
-		t.Fatal("refreshed although another process already had")
-	}
-	if s.Cookies[RefreshCookie] != "refresh-2" || s.Cookies[AccessCookie] != fresh {
-		t.Fatal("stored jar not adopted")
-	}
-}
-
-func TestStoreUsesStoredRefreshToken(t *testing.T) {
-	f, c := newFake(t)
-	s := loggedIn(c, time.Now().Add(-time.Minute))
-	s.Store = &memStore{jar: map[string]string{AccessCookie: testJWT(3000000001, time.Now().Add(-time.Minute)), RefreshCookie: "refresh-2"}}
-	if _, err := c.Me(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if h := f.headers["POST /web/api/auth/refresh"].Get("Cookie"); !strings.Contains(h, "refresh_token_web=refresh-2") {
-		t.Fatal("refresh replayed the in-memory (spent) token instead of the stored one")
-	}
-}
-
-func TestStoreLoggedOut(t *testing.T) {
-	_, c := newFake(t)
-	s := loggedIn(c, time.Now().Add(-time.Minute))
-	s.Store = &memStore{}
-	if _, err := c.Me(context.Background()); kindOf(err) != KindAuth {
 		t.Fatalf("err = %v", err)
+	}
+	if n := f.count("GET /api/v2/users/current"); n != 1 {
+		t.Fatalf("retried %d times after a failed renewal", n)
+	}
+}
+
+// An item page redirects to its canonical slug; the account request follows
+// it on the same host, never to another one.
+func TestAccountFollowsSameHostRedirectsOnly(t *testing.T) {
+	f, c := newFake(t)
+	loggedIn(c)
+	f.override["GET /items/1000000001"] = func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/items/1000000001-slug", http.StatusMovedPermanently)
+	}
+	f.override["GET /items/1000000001-slug"] = func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(fixture(t, "item.html"))
+	}
+	if _, err := c.Item(context.Background(), 1000000001); err != nil {
+		t.Fatal(err)
+	}
+	if f.count("GET /items/1000000001-slug") != 1 {
+		t.Fatal("redirect not followed")
+	}
+	f.override["GET /items/1000000004"] = func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://elsewhere.invalid/items/1000000004", http.StatusFound)
+	}
+	if _, err := c.Item(context.Background(), 1000000004); err == nil {
+		t.Fatal("a cross-host redirect was followed or ignored")
 	}
 }
 
@@ -815,17 +738,19 @@ func TestDebugRedactsCookies(t *testing.T) {
 	_, c := newFake(t)
 	var buf strings.Builder
 	c.Debug = &buf
-	s := loggedIn(c, time.Now().Add(-time.Minute))
-	if _, err := c.Me(context.Background()); err != nil {
+	if _, err := c.Search(context.Background(), SearchParams{Text: "nike"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, v := range s.Cookies {
-		if strings.Contains(buf.String(), v) {
-			t.Fatal("debug output leaked a cookie value")
-		}
+	g, err := c.guestJar(context.Background())
+	if err != nil {
+		t.Fatal(err)
 	}
-	err := c.statusError("GET /x", 500, []byte("token "+s.Cookies[AccessCookie]))
-	if strings.Contains(err.(*Error).Body, s.Cookies[AccessCookie]) {
+	tok := g.cookies[AccessCookie]
+	if tok == "" || strings.Contains(buf.String(), tok) {
+		t.Fatal("debug output leaked the guest token")
+	}
+	err = c.statusError("GET /x", 500, []byte("token "+tok))
+	if strings.Contains(err.(*Error).Body, tok) {
 		t.Fatal("error body leaked the access token")
 	}
 }

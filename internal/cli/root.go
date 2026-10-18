@@ -13,11 +13,11 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Microck/vinted-cli/internal/config"
+	"github.com/Microck/vinted-cli/internal/galleton"
 	"github.com/Microck/vinted-cli/internal/output"
 	"github.com/Microck/vinted-cli/internal/store"
 	"github.com/Microck/vinted-cli/internal/throttle"
@@ -34,13 +34,21 @@ type App struct {
 	Creds   config.Credentials
 	Profile string
 	Client  *vinted.Client
-	Session *vinted.Session
+	// Account is the logged-in profile's session in the Galleton daemon;
+	// nil when the profile has none.
+	Account *managedAccount
 	// Gate is the shared cooldown, pacing and budget for the client's site.
 	Gate *throttle.Gate
 	// Proxy is the proxy all Vinted traffic goes through, without
 	// credentials; empty for a direct connection.
 	Proxy   string
 	Printer output.Printer
+	// proxyURL is the full proxy URL the session engine must use too, and
+	// proxyErr why the configured one is unusable.
+	proxyURL string
+	proxyErr error
+	// sessionClient is this invocation's lease on the session engine.
+	sessionClient *galleton.Client
 
 	Stdout io.Writer
 	Stderr io.Writer
@@ -62,7 +70,20 @@ type App struct {
 
 // Execute runs the CLI and returns the process exit code.
 func Execute(version string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	// The bundled session engine's host process is this same executable.
+	if handled, err := galleton.HandleHost(args); handled {
+		if err != nil {
+			fmt.Fprintln(stderr, "vinted: session host:", err)
+			return 1
+		}
+		return 0
+	}
 	app := &App{Version: version, Stdin: stdin, Stdout: stdout, Stderr: stderr}
+	defer func() {
+		if app.sessionClient != nil {
+			app.sessionClient.Close()
+		}
+	}()
 	root := app.rootCmd()
 	root.SetArgs(args)
 	root.SetIn(stdin)
@@ -229,105 +250,49 @@ func (a *App) applyProxy() error {
 	if raw == "" {
 		raw, src = a.Cfg.Proxy, "config proxy"
 	}
-	a.Proxy = ""
+	a.Proxy, a.proxyURL, a.proxyErr = "", "", nil
 	if raw == "" {
 		return nil
 	}
 	u, err := vinted.ParseProxy(raw)
 	if err != nil {
-		return output.Usagef("%s: %v. Nothing is sent to vinted until it is fixed", src, err)
+		a.proxyErr = output.Usagef("%s: %v. Nothing is sent to vinted until it is fixed", src, err)
+		return a.proxyErr
 	}
 	a.Client.UseProxy(u)
-	a.Proxy = vinted.ProxyLabel(u)
+	a.Proxy, a.proxyURL = vinted.ProxyLabel(u), u.String()
 	return nil
 }
 
-// attachSession wires the active profile's cookie jar (or VINTED_COOKIES) into
-// the client. Commands that need auth call requireSession. Refreshed cookies
-// are written back under the credentials lock; env cookies never touch disk.
+// attachSession binds the active profile's session in the Galleton daemon.
+// It stays offline: the daemon starts on the first request that needs it.
 func (a *App) attachSession() error {
-	if raw := os.Getenv("VINTED_COOKIES"); raw != "" {
-		cookies, _, err := vinted.ParseCookieExport(strings.NewReader(raw))
-		if err != nil {
-			return output.Usagef("VINTED_COOKIES: %v", err)
-		}
-		a.Session = vinted.NewSession(a.Client, cookies)
-		a.Client.Session = a.Session
-		return nil
-	}
+	a.Account = nil
+	a.Client.Account = nil
 	s, ok := a.Creds.Profiles[a.Profile]
-	if !ok || len(s.Cookies) == 0 {
+	if !ok || s.GalletonID == "" {
 		return nil
 	}
-	a.Session = vinted.NewSession(a.Client, s.Cookies)
-	if !s.SessionExpires.IsZero() {
-		a.Session.Expires = s.SessionExpires
-	}
-	path, profile := a.Paths.CredentialsFile, a.Profile
-	a.Session.OnRotate = func(cookies map[string]string, expires time.Time) {
-		next, err := config.RotateSession(path, profile, cookies, expires)
-		if err != nil {
-			fmt.Fprintf(a.Stderr, "vinted: could not save the rotated session: %v\n", err)
-			return
-		}
-		a.adoptCreds(next)
-	}
-	a.Session.Store = credStore{app: a, path: path, profile: profile}
-	a.Client.Session = a.Session
-	return nil
-}
-
-func (a *App) adoptCreds(next config.Credentials) {
-	a.Creds = next
-	a.loadedCreds = config.CloneCredentials(next)
-}
-
-// credStore lets the session refresh under the credentials lock. Vinted
-// rotates refresh_token_web on every refresh and revokes the login when an old
-// one is replayed, so two processes (the watch timer and a command) must never
-// refresh with the same token: the second one takes the lock, finds the first
-// one's fresh jar on disk and adopts it instead.
-type credStore struct {
-	app           *App
-	path, profile string
-}
-
-func (s credStore) Lock(ctx context.Context) (func(), error) {
-	return config.LockCredentials(ctx, s.path)
-}
-
-func (s credStore) Load() (map[string]string, error) {
-	creds, err := config.LoadCredentials(s.path)
-	if err != nil {
-		return nil, err
-	}
-	return creds.Profiles[s.profile].Cookies, nil
-}
-
-func (s credStore) Save(cookies map[string]string, expires time.Time) error {
-	next, err := config.RotateSessionLocked(s.path, s.profile, cookies, expires)
-	if err != nil {
-		return err
-	}
-	s.app.adoptCreds(next)
+	a.Account = &managedAccount{app: a, id: s.GalletonID, provider: vinted.Provider(a.Client.Base), userID: s.UserID}
+	a.Client.Account = a.Account
 	return nil
 }
 
 func (a *App) requireSession() error {
-	if a.Session == nil {
-		return &vinted.Error{Kind: vinted.KindAuth, Msg: fmt.Sprintf("profile %q has no session. Run `vinted auth login`", a.Profile)}
+	if a.Account != nil {
+		return nil
 	}
-	return nil
+	if s, ok := a.Creds.Profiles[a.Profile]; ok && s.GalletonID == "" {
+		return &vinted.Error{Kind: vinted.KindAuth, Msg: fmt.Sprintf("profile %q was saved by an older vinted-cli, which kept the cookies itself. Export the cookies again from a logged-in browser and run `vinted auth login`", a.Profile)}
+	}
+	return &vinted.Error{Kind: vinted.KindAuth, Msg: fmt.Sprintf("profile %q has no session. Run `vinted auth login`", a.Profile)}
 }
 
-// userID returns the logged-in account's id: stored at login, read from the
-// access token, or fetched once as a last resort.
+// userID returns the logged-in account's id: stored at login, or fetched
+// once as a last resort.
 func (a *App) userID(ctx context.Context) (int64, error) {
-	if s, ok := a.Creds.Profiles[a.Profile]; ok && s.UserID != 0 && os.Getenv("VINTED_COOKIES") == "" {
-		return s.UserID, nil
-	}
-	if id := a.Session.UserID(); id != 0 {
-		return id, nil
+	if a.Account != nil && a.Account.userID != 0 {
+		return a.Account.userID, nil
 	}
 	me, err := a.Client.Me(ctx)
 	if err != nil {

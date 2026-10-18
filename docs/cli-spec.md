@@ -22,7 +22,7 @@ Noun-verb throughout. No catch-all subcommand, no abbreviations.
 ## 4. Command tree
 
 ```
-auth       login | status | refresh | logout
+auth       login | status | refresh | logout | service (enable|disable|status|run|stop)
 profile    list | use | remove
 search     [text...] | filters
 category   list
@@ -50,7 +50,7 @@ domain (`https://www.vinted.com` by default, `VINTED_BASE_URL` overrides it for 
 
 | command | request | notes |
 |---|---|---|
-| `auth refresh`, any authenticated call near expiry | `POST {base}/web/api/auth/refresh` body `{}` | sends the cookies; 200 `{access_token, refresh_token, expires_in, created_at}`. A logged-out cookie set answers 400 (exit 3). Whatever comes back is persisted |
+| `auth refresh`, the session engine before expiry | `POST {base}/web/api/auth/refresh` body `{}` | sent by the Galleton engine, never the CLI, with the cookies and the web app's headers; 200 `{access_token, refresh_token, expires_in, ...}` and both token cookies rotated in `Set-Cookie`, which the engine keeps. A refused refresh is exit 3 |
 | `auth login`, `me show` | `GET /api/v2/users/current` | `{"user":{...}}` |
 | `user show` | `GET /api/v2/users/{id}` | public profile |
 | `user items`, `me items` | `GET /api/v2/wardrobe/{user_id}/items?page=&per_page=` | `{"items":[...],"pagination":{current_page,total_pages,total_entries,per_page}}` |
@@ -98,29 +98,43 @@ a challenge page is exit 5.
 ### auth
 
 - `auth login [--profile NAME] [--cookies FILE | --cookies-stdin] [--domain HOST]`
-  Default is the cookie import prompt: it asks for a cookie export (Netscape file, the JSON
-  array Cookie-Editor writes, that array wrapped as `{"url":"https://www.vinted.com",
-  "cookies":[...]}`, or a raw `a=b; c=d` header). The whole jar is kept, because
-  Datadome cookies matter as much as the tokens; `access_token_web` and `refresh_token_web`
-  are required. Login validates with `GET /api/v2/users/current`, stores the Session and
-  the domain (from `--domain`, else the wrapper's `url`, else the host the cookies came
-  from, as `profiles.NAME.domain` in config). Implicitly creates the Profile; the first
-  Profile becomes default.
-- `auth status [--check]` shows the stored Profile, account and Access token expiry, and a
-  `cooldown` object while the site is paused after a block; `--check` makes an
-  authenticated call and reports `session_valid` (exit 5 during a cooldown).
-- `auth refresh` refreshes the Access token now and prints status. A rejected Refresh token
-  is exit 3 and needs a new browser export.
-- `auth logout [--yes]` deletes the stored Session. This does not revoke the browser login.
+  Default is the cookie import prompt: it asks for a cookie export, parsed by Galleton's
+  `cookiefile` package (Netscape `cookies.txt`; Cookie-Editor, EditThisCookie, DevTools or
+  Playwright JSON, bare or wrapped as `{"url":..., "cookies":[...]}`; or a raw `a=b; c=d`
+  header). The export is narrowed to the Vinted sites, then to the site's origins; the
+  site's other cookies are kept with the tokens, because Datadome cookies matter as much.
+  `refresh_token_web` is required. The cookies are imported into the session engine
+  (replacing the Profile's existing engine session at its revision); login then validates
+  with `GET /api/v2/users/current` through the engine and only then stores the Session
+  reference and the domain (from `--domain`, else the domain of the token cookies, as
+  `profiles.NAME.domain` in config). A rejected import is removed from the engine again.
+  Implicitly creates the Profile; the first Profile becomes default.
+- `auth status [--check]` shows the stored Profile, account, `source: "galleton"`,
+  `session_id`, and a `cooldown` object while the site is paused after a block. It is
+  offline. `--check` adds the engine's view (`engine`: status, last and next renewal, access
+  token expiry, cookie count) and an authenticated call, reported as `session_valid` (exit 5
+  during a cooldown). A Profile saved by an older version reports `needs_login`.
+- `auth refresh` asks the engine to renew now (through the request gate) and prints status
+  with the engine's view. A refused renewal is exit 3 and needs a new browser export.
+- `auth logout [--yes]` deletes the engine's session, then the stored reference. This does
+  not revoke the browser login.
+- `auth service enable|disable|status|run|stop` manages the session engine's optional
+  unattended renewal: `enable` installs a systemd user unit, LaunchAgent or Windows logon
+  task running `auth service run`, with the same frozen environment as watch units (and the
+  same refusal of a `VINTED_PROXY` with credentials); `status` never starts the engine;
+  `stop` refuses while clients hold leases.
 
-Session mechanics: the Access token is the `access_token_web` JWT. Its `exp` claim decides
-when it is stale; the client refreshes 60 seconds ahead of it, persists the returned cookies
-to `credentials.toml` and carries on. The account id comes from the JWT `sub` claim. No
-password ever touches the CLI, and no background service is needed. See ADR 0001.
+Session mechanics: the account's cookies live only in the pinned Galleton daemon bundled in
+the binary (ADR 0002, `docs/galleton.md`). It renews the access token five minutes before the
+`expires_in` Vinted returns, keeps every cookie a response sets except that only a renewal may
+set the two tokens, and relays every logged-in request with the cookies attached. A 401
+asks it to renew once and retries. Requests pass the CLI's gate first; a block also pauses the
+engine's provider for the cooldown. The account id is recorded at login. No password ever
+touches the CLI, and no cookie ever enters its process.
 
 ### profile
 
-- `profile list` (name, account, default marker, domain, token expiry)
+- `profile list` (name, account, default marker, engine session ID, login time, `needs_login`)
 - `profile use NAME` sets the default
 - `profile remove NAME [--yes]` removes the Session and its Watches
 
@@ -281,8 +295,8 @@ Watches, Checks, Events and Sinks are defined in `AGENTS.md`.
   `vinted watch check --all --jitter <interval/10> --profile ...`. On Windows it
   prints the `schtasks` command to run by hand. The unit pins `HOME`, the XDG variables,
   `VINTED_CONFIG`, `VINTED_BASE_URL` and `VINTED_PROXY` as they stood at install time, because a scheduler
-  starts jobs with a bare environment. `VINTED_COOKIES` is never written: unit files are
-  world-readable, and install refuses a `VINTED_PROXY` with credentials for the same reason.
+  starts jobs with a bare environment. No credential is ever written: unit files are
+  world-readable, so install refuses a `VINTED_PROXY` with credentials.
   On Linux install also runs `loginctl enable-linger`. `status` says
   `not installed`, or what the scheduler reports. `uninstall` removes the units and the log.
   Output is appended to `$XDG_STATE_HOME/vinted-cli/vinted-watch-<profile>.log`, rotated to
@@ -354,8 +368,8 @@ No MCP SDK.
   `item favorite`/`unfavorite` and every listing change (`item create`, `edit`, `delete`,
   `hide`, `unhide`). Writing to other people or changing the account stays with the person
   at the terminal.
-- Every invocation re-reads config and credentials, so a long-running server follows a
-  refreshed Session.
+- Every invocation re-reads config and credentials, so a long-running server follows a new
+  login, and takes and releases its own session engine lease.
 - `vinted mcp install claude-code|codex|cursor` writes the entry into the harness config.
   Other entries and keys the CLI does not own survive. Output is
   `{harness,path,action,command,args}` with action `added`, `updated` or `unchanged`. The
@@ -370,7 +384,7 @@ No MCP SDK.
   Sink's `type` (`ntfy`, `webhook`, `exec`) and `template` (`discord`, `slack` or unset). A
   rejected value is exit 2 and leaves the file untouched.
 - `doctor` checks: config parses, Sinks, proxy (shown without credentials), cooldown, Vinted
-  reachable, Session refreshes, service unit state. Exit 1 if any check fails; exit 5,
+  reachable, Session works, service unit state. Exit 1 if any check fails; exit 5,
   without any network check, while a cooldown lasts.
 - `cooldown` shows the cooldown of the Profile's site (`{site, blocked, blocked_at,
   blocked_until, remaining, cause, request_interval, file}`); `cooldown clear [--yes]` lifts
@@ -399,7 +413,8 @@ No MCP SDK.
 - stdout: data only, one JSON document per command (or JSON lines).
 - stderr: errors, prompts, progress, debug.
 - Prompts only when stdin, stdout and stderr are all TTYs and `--no-input` is absent.
-- Secrets never appear in argv: cookies come from a file, stdin, the prompt or `VINTED_COOKIES`.
+- Secrets never appear in argv: cookies come from a file, stdin or the prompt, and the proxy
+  reaches the session engine through its environment.
 
 ## 8. Exit codes
 
@@ -408,7 +423,7 @@ No MCP SDK.
 | 0 | success (including "nothing changed") |
 | 1 | generic failure |
 | 2 | usage: bad flags, bad id or URL, interval/page caps, a command past its 60-request budget, an invalid `proxy` or `request_interval` |
-| 3 | auth: no Session, Session rejected, refresh refused, account verification required |
+| 3 | auth: no Session, Session rejected, renewal refused or uncertain, a Profile saved by an older version, account verification required |
 | 4 | not found: item/user/conversation/watch |
 | 5 | blocked: Datadome/Cloudflare challenge or block page, 429, a 403 without a Vinted error body, or a request refused during the cooldown that follows. Never retried |
 | 6 | network / timeout, including an unreachable proxy (never falls back to direct) |
@@ -432,11 +447,13 @@ version, OS/arch, command path (no argument values), endpoint path, HTTP status 
 |---|---|---|
 | config | `$XDG_CONFIG_HOME/vinted-cli/config.toml` | 0644 |
 | credentials | `$XDG_CONFIG_HOME/vinted-cli/credentials.toml` | 0600, locked/atomic updates |
+| session engine | `$XDG_CONFIG_HOME/vinted-cli/galleton/` (encrypted vault, extracted engine, API token) | 0700 dir, 0600 files |
 | state | `$XDG_DATA_HOME/vinted-cli/state.db` (SQLite) | 0600 |
 | logs, throttle state | `$XDG_STATE_HOME/vinted-cli/` (`throttle.json` 0600, locked/atomic updates) | |
 
-`credentials.toml` holds one table per Profile: the imported cookie jar, the Access token
-expiry and the account id. It is never relocatable by config, only by XDG variables.
+`credentials.toml` holds one table per Profile: the session engine's session ID
+(`galleton_id`), the account id and login, and when it was logged in. No cookie. It is never
+relocatable by config, only by XDG variables.
 
 ```toml
 default_profile = "default"
@@ -448,13 +465,16 @@ domain = "www.vinted.fr"
 interval = "15m"
 ```
 
-Env: `VINTED_PROFILE`, `VINTED_CONFIG` (config file path), `VINTED_COOKIES` (raw cookie
-header for CI, wins over the credentials file, never written), `VINTED_ERROR_FORMAT`,
-`VINTED_BASE_URL` (tests), `VINTED_NO_UPDATE_CHECK`, `NO_COLOR`, `VINTED_PROXY`.
-`HTTPS_PROXY`/`HTTP_PROXY` apply only when no proxy is configured; `VINTED_PROXY` (or
+Env: `VINTED_PROFILE`, `VINTED_CONFIG` (config file path), `VINTED_ERROR_FORMAT`,
+`VINTED_BASE_URL` (tests), `VINTED_NO_UPDATE_CHECK`, `NO_COLOR`, `VINTED_PROXY`,
+`VINTED_GALLETON_DIR` / `VINTED_GALLETON_URL` / `VINTED_GALLETON_TOKEN_FILE` (use an
+externally run Galleton daemon instead of the bundled one).
+`HTTPS_PROXY`/`HTTP_PROXY` apply only when no proxy is configured, to the session engine
+too; `VINTED_PROXY` (or
 config `proxy`, e.g. `socks5h://127.0.0.1:1080`, `http://host:port`) sends every Vinted
-request through that proxy, ignores `NO_PROXY`, and fails with exit 6 rather than going
-direct when the proxy is unreachable. An invalid proxy fails every request with exit 2.
+request through that proxy, the session engine's renewals included, ignores `NO_PROXY`, and
+fails with exit 6 rather than going direct when the proxy is unreachable. A running engine
+keeps the proxy it started with; a command configured with another one refuses to attach. An invalid proxy fails every request with exit 2.
 `request_interval` (top-level config key, default `2s`, floor `1s`) is the gap between two
 requests to one site.
 Precedence: flags > env > config.
@@ -516,8 +536,10 @@ shipping (never), settings edits (never), realtime chat push (`chat open` polls)
 
 ```
 cmd/vinted/main.go   entrypoint; lives under cmd/ so `go install` names the binary vinted
+cmd/bundle-galleton/ builds the pinned session engine for embedding
 internal/cli/        one file per noun
-internal/vinted/     client: session, page parsing, items, users, chat, errors
+internal/vinted/     client: account and guest transport, engine adapter, page parsing, items, users, chat, errors
+internal/galleton/   bundled session engine: pin, extraction, host process, SDK wrapper
 internal/store/      sqlite schema, watches, events, seen-state
 internal/watch/      check logic per target type, diffing, event construction
 internal/sink/       ntfy, webhook, exec
