@@ -135,6 +135,13 @@ func (a *App) runCommand(ctx context.Context, argv []string) mcp.Result {
 	if sub.sessionClient != nil {
 		sub.sessionClient.Close() // release the session engine lease
 	}
+	// A login made after the server started: hold the lifetime lease from now
+	// on, so the engine keeps renewing between tool calls.
+	if a.sessionClient == nil && sub.Account != nil {
+		if _, err := a.galletonClient(ctx); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(a.Stderr, "vinted: session engine: %v\n", err)
+		}
+	}
 	if err == nil {
 		return mcp.Result{Stdout: out.String()}
 	}

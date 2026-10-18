@@ -875,6 +875,24 @@ func systemdEnv(env [][2]string) string {
 	return b.String()
 }
 
+// launchdEnv adds every carried variable the enabling shell did not have as
+// an empty value: launchd has no unset, and the CLI, Go's proxy lookup and
+// the XDG paths all treat an empty variable as unset, so `launchctl setenv`
+// leftovers cannot slip in.
+func launchdEnv(env [][2]string) [][2]string {
+	set := map[string]bool{}
+	for _, kv := range env {
+		set[kv[0]] = true
+	}
+	out := append([][2]string{}, env...)
+	for _, k := range append(append(append([]string{}, serviceEnvXDGKeys...), "VINTED_CONFIG"), serviceEnvURLKeys...) {
+		if !set[k] {
+			out = append(out, [2]string{k, ""})
+		}
+	}
+	return out
+}
+
 // checkServiceProxies refuses to freeze a proxy carrying credentials into a
 // world-readable unit file.
 func checkServiceProxies() error {
@@ -1057,7 +1075,7 @@ func (a *App) serviceInstall(iv time.Duration) error {
 		}
 		view.State = "enabled"
 	case "launchd":
-		if err := os.WriteFile(u.files[0], []byte(launchdPlist(u.name, exe, args, logFile, iv, serviceEnv())), 0o644); err != nil {
+		if err := os.WriteFile(u.files[0], []byte(launchdPlist(u.name, exe, args, logFile, iv, launchdEnv(serviceEnv()))), 0o644); err != nil {
 			return err
 		}
 		_ = exec.Command("launchctl", "unload", u.files[0]).Run()

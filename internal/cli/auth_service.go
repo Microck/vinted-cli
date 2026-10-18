@@ -193,7 +193,11 @@ func (a *App) authServiceChange(ctx context.Context, enable bool) error {
 			return err
 		}
 		if u.platform != "schtasks" {
-			if err := os.WriteFile(u.files[0], []byte(authServiceDefinition(u.platform, u.name, exe, dir, serviceEnv())), 0600); err != nil {
+			env := serviceEnv()
+			if u.platform == "launchd" {
+				env = launchdEnv(env)
+			}
+			if err := os.WriteFile(u.files[0], []byte(authServiceDefinition(u.platform, u.name, exe, dir, env)), 0600); err != nil {
 				return err
 			}
 		}
