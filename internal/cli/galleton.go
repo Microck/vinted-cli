@@ -219,7 +219,7 @@ func (a *App) engineSetup() (galleton.Setup, error) {
 	if proxy != "" {
 		env = galleton.ProxyEnv
 	}
-	adapter, err := vinted.Adapter(a.Client.Base, env)
+	adapter, err := vinted.Adapter(a.Client.Base, env, a.Gate.Interval())
 	if err != nil {
 		return galleton.Setup{}, err
 	}

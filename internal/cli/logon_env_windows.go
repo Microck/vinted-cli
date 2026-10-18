@@ -21,16 +21,20 @@ func checkLogonEnv(env [][2]string) error {
 		return err
 	}
 	defer k.Close()
+	want := map[string]string{}
 	for _, kv := range env {
-		if kv[0] == "HOME" {
-			continue
-		}
-		saved, _, err := k.GetStringValue(kv[0])
+		want[kv[0]] = kv[1]
+	}
+	// Every variable a unit would carry, set here or not: one the shell
+	// lacks but the saved environment has would still reach the task.
+	keys := append(append(append([]string{}, serviceEnvXDGKeys...), "VINTED_CONFIG"), serviceEnvURLKeys...)
+	for _, key := range keys {
+		saved, _, err := k.GetStringValue(key)
 		if err != nil && !errors.Is(err, registry.ErrNotExist) {
 			return err
 		}
-		if saved != kv[1] {
-			return output.Usagef("the logon task starts with your saved user environment, where %s is not what this shell has. Save it with `setx %s <value>` and open a new terminal, or unset it here, then enable again", kv[0], kv[0])
+		if saved != want[key] {
+			return output.Usagef("the logon task starts with your saved user environment, where %s differs from this shell. Make them match (`setx %s <value>`, or remove it from the saved environment, then open a new terminal) and enable again", key, key)
 		}
 	}
 	return nil

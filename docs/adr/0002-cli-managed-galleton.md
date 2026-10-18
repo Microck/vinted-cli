@@ -37,7 +37,7 @@ The CLI uses a pinned Galleton daemon as its session engine, the same way wallap
   `vinted-fr`, ...), following galleton's `examples/adapters.vinted.json`. Renewal is
   `POST /web/api/auth/refresh` with the web app's own headers, both token cookies are
   protected and must rotate, `expires_in` schedules the next renewal, Datadome and Cloudflare
-  challenges are temporary refusals, calls are at least one second apart, and request and
+  challenges are temporary refusals, calls are spaced by the CLI's `request_interval`, and request and
   response limits fit a photo upload and a catalog page.
 - `VINTED_PROXY` (or the config proxy) reaches the daemon through `proxy_env`, so renewals
   leave through the same egress as everything else, and never directly. A daemon records the

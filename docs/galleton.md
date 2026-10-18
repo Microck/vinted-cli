@@ -70,8 +70,8 @@ This writes a systemd user unit on Linux, a LaunchAgent on macOS, or a logon tas
 with absolute paths and the `HOME`, `XDG_*`, `VINTED_CONFIG`, `VINTED_BASE_URL`,
 `VINTED_PROXY` and `HTTP(S)_PROXY`/`NO_PROXY` of the shell that enabled it. It never contains a
 credential: enable refuses a proxy variable carrying one. A Windows logon task cannot carry variables; it starts with the
-saved user environment, so enable refuses when one of those variables differs there (save it
-with `setx` first). Linux user lingering is not enabled, so this is a login service,
+saved user environment, so enable refuses when one of those variables, set in the shell or
+not, differs there (match them with `setx` first). Linux user lingering is not enabled, so this is a login service,
 not renewal while the machine is off.
 
 For a container or another supervisor, run `vinted auth service run` in the foreground.
@@ -99,9 +99,9 @@ so on, plus `vinted-custom` for a `VINTED_BASE_URL`.
   When a CLI request is blocked, the CLI starts its cooldown and pauses the engine's provider
   for as long, so no renewal goes out meanwhile; the pause survives an engine restart.
   `vinted cooldown clear` lifts both.
-- **Pacing.** The CLI's request gate (one request per two seconds per site, shared by every
-  process) stays in front of every engine call, and the engine spaces its own calls, renewals
-  included, by at least a second.
+- **Pacing.** The CLI's request gate (one request per `request_interval`, two seconds by
+  default, per site, shared by every process) stays in front of every engine call, and the
+  engine spaces its own calls, renewals included, by the same interval.
 - **Size.** Requests up to 33 MiB (a 32 MiB photo upload and its multipart envelope) and
   responses up to 16 MiB (catalog pages are about 4 MiB). Connections are reused for account
   requests; renewals always use a fresh one.

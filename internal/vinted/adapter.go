@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 )
 
 // The account's cookies live in the Galleton session engine, not in the CLI.
@@ -87,8 +88,10 @@ type adapterProvider struct {
 // Adapter renders the session engine's configuration: a provider for every
 // Vinted site, plus base when it is not one of them (VINTED_BASE_URL). With
 // proxyEnv set, every renewal and account request leaves through the proxy
-// in that environment variable and never directly.
-func Adapter(base, proxyEnv string) ([]byte, error) {
+// in that environment variable and never directly. interval is the CLI's
+// request gap, which the engine keeps between its own calls too, renewals
+// included, since those do not pass the CLI's gate.
+func Adapter(base, proxyEnv string, interval time.Duration) ([]byte, error) {
 	bases := make([]string, 0, len(siteLanguages)+2)
 	bases = append(bases, DefaultBase)
 	for host := range siteLanguages {
@@ -100,12 +103,12 @@ func Adapter(base, proxyEnv string) ([]byte, error) {
 	}
 	providers := make([]adapterProvider, 0, len(bases))
 	for _, b := range bases {
-		providers = append(providers, siteProvider(b, proxyEnv))
+		providers = append(providers, siteProvider(b, proxyEnv, interval))
 	}
 	return json.MarshalIndent(map[string]any{"providers": providers}, "", "  ")
 }
 
-func siteProvider(base, proxyEnv string) adapterProvider {
+func siteProvider(base, proxyEnv string, interval time.Duration) adapterProvider {
 	c := &Client{Base: base}
 	p := adapterProvider{
 		Name:          Provider(base),
@@ -132,7 +135,7 @@ func siteProvider(base, proxyEnv string) adapterProvider {
 			{Status: []int{403, 503}, Header: "Cf-Mitigated", HeaderContains: "challenge"},
 			{Status: []int{403}, NotJSON: true},
 		},
-		MinIntervalMS:        1000,
+		MinIntervalMS:        int(interval / time.Millisecond),
 		KeepAlive:            true,
 		MaxRequestBodyBytes:  MaxRequestBody,
 		MaxResponseBodyBytes: maxResponseBody,
