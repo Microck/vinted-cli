@@ -328,15 +328,19 @@ func (a *App) openEngine(ctx context.Context, dir string) (*galleton.Client, err
 	if err != nil {
 		return nil, err
 	}
-	pauses, err := a.enginePauses()
-	if err != nil {
-		return nil, err
+	// Checked at the last moment before a start, so a block recorded by
+	// another process while this one was getting ready still holds it.
+	setup.MayLaunch = func() error {
+		pauses, err := a.enginePauses()
+		if err != nil {
+			return err
+		}
+		if len(pauses) > 0 {
+			return &engineHeldError{&vinted.Error{Kind: vinted.KindBlocked, Msg: "a cooldown is running, so the session engine stays stopped until it ends: once started it would renew sessions against the blocked site before it could be paused. Check `vinted cooldown status`"}}
+		}
+		return nil
 	}
-	setup.NoLaunch = len(pauses) > 0
 	c, err := galleton.Open(ctx, dir, setup)
-	if errors.Is(err, galleton.ErrNotRunning) {
-		return nil, &engineHeldError{&vinted.Error{Kind: vinted.KindBlocked, Msg: "a cooldown is running, so the session engine stays stopped until it ends: once started it would renew sessions against the blocked site before it could be paused. Check `vinted cooldown status`"}}
-	}
 	if err != nil {
 		return nil, err
 	}

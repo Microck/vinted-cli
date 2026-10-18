@@ -43,13 +43,11 @@ var errHostConfigMismatch = errors.New("the running session engine uses a differ
 type Setup struct {
 	Adapter []byte
 	Proxy   string
-	// NoLaunch attaches to a running daemon only: Open returns ErrNotRunning
-	// instead of starting one. Not part of the fingerprint.
-	NoLaunch bool
+	// MayLaunch, when set, is asked right before a daemon is started (under
+	// the startup lock, after the last attach attempt failed); an error stops
+	// the start and is what Open returns. Not part of the fingerprint.
+	MayLaunch func() error
 }
-
-// ErrNotRunning is Open with NoLaunch finding no daemon to attach to.
-var ErrNotRunning = errors.New("the session engine is not running")
 
 func (s Setup) fingerprint() string {
 	h := sha256.New()
@@ -152,8 +150,10 @@ func Open(ctx context.Context, dir string, setup Setup) (*Client, error) {
 	}
 	if free {
 		filelock.Release(host)
-		if setup.NoLaunch {
-			return nil, ErrNotRunning
+		if setup.MayLaunch != nil {
+			if err := setup.MayLaunch(); err != nil {
+				return nil, err
+			}
 		}
 		if err := launch(); err != nil {
 			return nil, err
@@ -185,8 +185,10 @@ func Open(ctx context.Context, dir string, setup Setup) (*Client, error) {
 			}
 			if unlocked {
 				filelock.Release(host)
-				if setup.NoLaunch {
-					return nil, ErrNotRunning
+				if setup.MayLaunch != nil {
+					if err := setup.MayLaunch(); err != nil {
+						return nil, err
+					}
 				}
 				free = true
 				if err := launch(); err != nil {
