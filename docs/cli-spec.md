@@ -103,11 +103,12 @@ a challenge page is exit 5.
   Playwright JSON, bare or wrapped as `{"url":..., "cookies":[...]}`; or a raw `a=b; c=d`
   header). The export is narrowed to the Vinted sites, then to the site's origins; the
   site's other cookies are kept with the tokens, because Datadome cookies matter as much.
-  `refresh_token_web` is required. The cookies are imported into the session engine
-  (replacing the Profile's existing engine session at its revision); login then validates
-  with `GET /api/v2/users/current` through the engine and only then stores the Session
-  reference and the domain (from `--domain`, else the domain of the token cookies, as
-  `profiles.NAME.domain` in config). A rejected import is removed from the engine again.
+  `refresh_token_web` is required. The cookies are imported into the session engine as a
+  new session beside the Profile's current one; login then validates with
+  `GET /api/v2/users/current` through the engine and only then stores the Session reference
+  and the domain (from `--domain`, else the domain of the token cookies, as
+  `profiles.NAME.domain` in config) and deletes the session it replaced. A rejected import
+  is removed from the engine again and the Profile keeps its previous session.
   Implicitly creates the Profile; the first Profile becomes default.
 - `auth status [--check]` shows the stored Profile, account, `source: "galleton"`,
   `session_id`, and a `cooldown` object while the site is paused after a block. It is

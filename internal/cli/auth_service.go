@@ -177,6 +177,11 @@ func (a *App) authServiceChange(ctx context.Context, enable bool) error {
 		return nil
 	}
 	if enable {
+		if u.platform == "schtasks" {
+			if err := checkLogonEnv(serviceEnv()); err != nil {
+				return err
+			}
+		}
 		// Prove startup works before registering it with the user's OS session.
 		if _, err := a.galletonClient(ctx); err != nil {
 			return err

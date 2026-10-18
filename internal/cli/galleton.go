@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -173,16 +174,21 @@ func managedError(err error) error {
 	return e
 }
 
-// managedProfileID names a profile's daemon session, namespaced by the
-// credentials file so separate CLI homes sharing an external daemon never
-// collide. Arbitrary profile names stay valid IDs.
-func (a *App) managedProfileID(profile string) string {
+// newSessionID names one login's daemon session: namespaced by credentials
+// file and profile, so separate CLI homes sharing an external daemon never
+// collide and arbitrary profile names stay valid IDs, plus a random part, so
+// a new login never overwrites the session it is meant to replace.
+func (a *App) newSessionID(profile string) (string, error) {
 	path, err := filepath.Abs(a.Paths.CredentialsFile)
 	if err != nil {
 		path = filepath.Clean(a.Paths.CredentialsFile)
 	}
 	sum := sha256.Sum256([]byte(path + "\x00" + profile))
-	return fmt.Sprintf("vinted-%x", sum[:27])
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("vinted-%x-%x", sum[:20], nonce), nil
 }
 
 // sessionDir holds the bundled daemon's encrypted vault, next to credentials.toml.
@@ -261,10 +267,10 @@ func (a *App) forgetManagedProfile(ctx context.Context, profile string) error {
 	return nil
 }
 
-// managedLogin imports an export into the daemon under the profile's session
-// ID, validates it by reading the account through the daemon, and only then
-// records the reference. Explicit login replaces an existing daemon session
-// at its current revision; nothing else ever does.
+// managedLogin imports an export into the daemon under a new session ID,
+// validates it by reading the account through the daemon, and only then
+// points the profile at it and deletes the session it replaces. A login that
+// fails leaves the previous session as it was.
 func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, domain string) error {
 	base := a.Client.Base
 	cookies := export.For(base)
@@ -272,10 +278,11 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 		return output.Usagef("the export has no %s for %s; export the cookies of a logged-in tab of that site, or pass --domain", vinted.RefreshCookie, siteHostname(base))
 	}
 	provider := vinted.Provider(base)
-	id := a.managedProfileID(a.Profile)
-	if s, ok := a.Creds.Profiles[a.Profile]; ok && s.GalletonID != "" {
-		id = s.GalletonID
+	id, err := a.newSessionID(a.Profile)
+	if err != nil {
+		return err
 	}
+	previous := a.Creds.Profiles[a.Profile].GalletonID
 	c, err := a.galletonClient(ctx)
 	if err != nil {
 		return managedError(err)
@@ -285,35 +292,33 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 		exp := export.AccessExpires.UTC()
 		in.AccessExpiresAt = &exp
 	}
-	existing, err := c.Status(ctx, id)
-	exists := err == nil
-	if err != nil && !galleton.IsStatus(err, http.StatusNotFound) {
-		return managedError(err)
-	}
-	if exists {
-		in.Replace, in.ExpectedRevision = true, &existing.Revision
-	}
 	// The import goes to the local daemon, not to Vinted; the gate guards the
 	// account read below and the renewal the daemon starts right away.
 	if _, err := c.Connect(ctx, id, in); err != nil {
 		return managedError(err)
 	}
+	forget := func(id, what string) {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
+		if err := c.Forget(cleanup, id); err != nil {
+			fmt.Fprintf(a.Stderr, "vinted: could not remove the %s session %s from the engine: %v\n", what, id, managedError(err))
+		}
+	}
 	a.Account = &managedAccount{app: a, id: id, provider: provider, checked: true}
 	a.Client.Account = a.Account
 	me, err := a.Client.Me(ctx)
 	if err != nil {
-		if !exists {
-			// A rejected import must not linger in the vault.
-			if ferr := c.Forget(ctx, id); ferr != nil {
-				fmt.Fprintf(a.Stderr, "vinted: could not remove the rejected session from the engine: %v\n", ferr)
-			}
-		}
+		forget(id, "rejected")
 		return err
 	}
 	a.Account.userID = me.ID
 	a.Creds.Profiles[a.Profile] = config.Session{GalletonID: id, UserID: me.ID, Login: me.Login, UpdatedAt: time.Now().UTC()}
 	if err := a.saveCreds(); err != nil {
-		return fmt.Errorf("the session engine holds the session, but credentials.toml could not be saved (run the login again): %w", err)
+		forget(id, "new")
+		return fmt.Errorf("credentials.toml could not be saved, so the profile keeps its previous session: %w", err)
+	}
+	if previous != "" && previous != id {
+		forget(previous, "replaced")
 	}
 	// First profile becomes the default; the site sticks to the profile.
 	if a.Cfg.DefaultProfile == "" {

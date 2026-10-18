@@ -33,10 +33,11 @@ and checksums live in `internal/galleton/bundle/version.go`.
 `cookies.txt`, Cookie-Editor, EditThisCookie, DevTools and Playwright JSON lists (bare or
 wrapped as `{"url": ..., "cookies": [...]}`), or a `Cookie:` header. A whole-browser export is
 narrowed to the Vinted sites while parsing, and then to the origins of the profile's site. The
-cookies are imported into the engine under a session ID derived from the credentials file and
-the profile name; an existing session is replaced at its current revision. The engine renews
-right away, the CLI reads the account through it, and only then does `credentials.toml` get the
-session ID, the account id and the login. A rejected import is removed from the vault again.
+cookies are imported into the engine as a new session, beside the profile's current one, under
+an ID derived from the credentials file and the profile name plus a random part. The engine
+renews right away, the CLI reads the account through it, and only then does `credentials.toml`
+get the new session ID, the account id and the login, and the replaced session is deleted. A
+rejected import is removed from the vault again and the profile keeps its previous session.
 
 After the import the browser still holds the refresh token the engine just spent. Log out
 there (and log in again if you want the website) so the browser gets its own session.
@@ -67,7 +68,9 @@ vinted auth service disable
 This writes a systemd user unit on Linux, a LaunchAgent on macOS, or a logon task on Windows,
 with absolute paths and the `HOME`, `XDG_*`, `VINTED_CONFIG`, `VINTED_BASE_URL` and
 `VINTED_PROXY` of the shell that enabled it. It never contains a credential: enable refuses a
-`VINTED_PROXY` carrying one. Linux user lingering is not enabled, so this is a login service,
+`VINTED_PROXY` carrying one. A Windows logon task cannot carry variables; it starts with the
+saved user environment, so enable refuses when one of those variables differs there (save it
+with `setx` first). Linux user lingering is not enabled, so this is a login service,
 not renewal while the machine is off.
 
 For a container or another supervisor, run `vinted auth service run` in the foreground.

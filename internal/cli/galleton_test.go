@@ -100,3 +100,36 @@ func TestAuthServiceStatusAndStop(t *testing.T) {
 	// The vault outlives the engine: the next command restarts it.
 	h.must("", "me", "show")
 }
+
+// A new login is imported beside the current session and replaces it only
+// once it works: a rejected one leaves the profile on its old session, and a
+// good one removes the old session from the engine.
+func TestReloginReplacesTheSessionOnlyWhenTheNewOneWorks(t *testing.T) {
+	h := newHarness(t)
+	first := decode[map[string]any](t, h.login().stdout)["session_id"].(string)
+
+	bad := filepath.Join(t.TempDir(), "spent.txt")
+	if err := os.WriteFile(bad, []byte("access_token_web=x; refresh_token_web=spent-refresh-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := h.run("", "auth", "login", "--cookies", bad); r.code != 3 {
+		t.Fatalf("login with a spent token: exit %d\n%s", r.code, r.stderr)
+	}
+	if st := decode[map[string]any](t, h.must("", "auth", "status").stdout); st["session_id"] != first {
+		t.Fatalf("a rejected login replaced the session: %v", st)
+	}
+	h.must("", "me", "show")
+
+	second := decode[map[string]any](t, h.login().stdout)["session_id"].(string)
+	if second == first {
+		t.Fatal("a new login reused the old session id")
+	}
+	sessions, err := h.engineClient().List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].ID != second {
+		t.Fatalf("engine sessions after relogin: %+v", sessions)
+	}
+	h.must("", "me", "show")
+}
