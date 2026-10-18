@@ -124,6 +124,12 @@ func (c *Client) Refresh(ctx context.Context, id string) (Metadata, error) {
 	return out, safeError(ctx, err)
 }
 
+// List is every session's metadata, the scheduler's last error included.
+func (c *Client) List(ctx context.Context) ([]Metadata, error) {
+	out, err := c.sdk.List(ctx)
+	return out, safeError(ctx, err)
+}
+
 // Request sends one managed request: the daemon attaches the session's
 // cookies, keeps whatever the response sets, and relays the answer. It is
 // never replayed, here or in the daemon.

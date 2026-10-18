@@ -41,6 +41,20 @@ func Provider(base string) string {
 	return "vinted-custom"
 }
 
+// ProviderBase is the site behind an engine provider of Adapter(base, ...):
+// one of Vinted's sites, or base for "vinted-custom". "" for any other name.
+func ProviderBase(provider, base string) string {
+	for _, b := range allSites() {
+		if Provider(b) == provider {
+			return b
+		}
+	}
+	if provider == "vinted-custom" && Provider(base) == provider {
+		return strings.TrimRight(base, "/")
+	}
+	return ""
+}
+
 // siteHost is a base's host without "www.", lower case.
 func siteHost(base string) string {
 	u, err := url.Parse(strings.TrimRight(base, "/"))

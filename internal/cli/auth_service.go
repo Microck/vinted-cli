@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +16,16 @@ import (
 	"github.com/Microck/vinted-cli/internal/config"
 	"github.com/Microck/vinted-cli/internal/galleton"
 	"github.com/Microck/vinted-cli/internal/output"
+	"github.com/Microck/vinted-cli/internal/throttle"
+	"github.com/Microck/vinted-cli/internal/vinted"
 	"github.com/spf13/cobra"
+)
+
+// serviceTick is how often `auth service run` checks the engine; serviceStop
+// ends it (tests only: nil never fires).
+var (
+	serviceTick = 10 * time.Second
+	serviceStop <-chan struct{}
 )
 
 func (a *App) authServiceCmd() *cobra.Command {
@@ -42,11 +52,14 @@ paths and VINTED_PROXY of the shell that enabled it, never a credential.`,
 			return err
 		}
 		defer c.Close()
-		tick := time.NewTicker(10 * time.Second)
+		reported := map[string]time.Time{}
+		tick := time.NewTicker(serviceTick)
 		defer tick.Stop()
 		for {
 			select {
 			case <-cmd.Context().Done():
+				return nil
+			case <-serviceStop:
 				return nil
 			case <-tick.C:
 				probe, cancel := context.WithTimeout(cmd.Context(), 2*time.Second)
@@ -54,6 +67,9 @@ paths and VINTED_PROXY of the shell that enabled it, never a credential.`,
 				cancel()
 				if err != nil {
 					// Returning an error lets an explicitly installed OS service restart.
+					return err
+				}
+				if err := a.recordEngineBlocks(cmd.Context(), c, reported); err != nil {
 					return err
 				}
 				// The engine caps a pause at 24 h while a cooldown can last
@@ -90,6 +106,43 @@ paths and VINTED_PROXY of the shell that enabled it, never a credential.`,
 		}},
 	)
 	return cmd
+}
+
+// recordEngineBlocks starts the shared cooldown for a site whose scheduled
+// renewal the bot protection blocked. Nothing else reports it: the engine
+// only backs off that session, and no command saw the block. reported holds
+// the retry time already handled per session, so one block counts once.
+func (a *App) recordEngineBlocks(ctx context.Context, c *galleton.Client, reported map[string]time.Time) error {
+	sessions, err := c.List(ctx)
+	if err != nil {
+		return err
+	}
+	active, err := a.Gate.Cooldowns()
+	if err != nil {
+		return err
+	}
+	for _, s := range sessions {
+		if s.Status != "retry_wait" || s.Error == nil || s.Error.Code != "upstream_blocked" || reported[s.ID].Equal(s.NextRefresh) {
+			continue
+		}
+		reported[s.ID] = s.NextRefresh
+		base := vinted.ProviderBase(s.Provider, a.Client.Base)
+		if base == "" {
+			continue
+		}
+		u, err := url.Parse(base)
+		if err != nil {
+			continue
+		}
+		if until, ok := active[u.Host]; ok && !until.Before(s.NextRefresh) {
+			continue // a running cooldown already covers the engine's retry
+		}
+		g := throttle.New(a.Paths.StateDir, base, throttle.Options{Clock: throttleClock})
+		if _, err := g.Block("vinted's bot protection (Datadome/Cloudflare) blocked the session engine's scheduled token renewal", time.Until(s.NextRefresh)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *App) authServiceUnit() (*serviceUnit, string, error) {

@@ -138,6 +138,13 @@ func Open(ctx context.Context, dir string, setup Setup) (*Client, error) {
 		if err != nil {
 			return err
 		}
+		// Last, after a source build that can take minutes: anything the
+		// caller learned meanwhile still stops the start.
+		if setup.MayLaunch != nil {
+			if err := setup.MayLaunch(); err != nil {
+				return err
+			}
+		}
 		cmd := exec.Command(exe, hostCommand, dir)
 		cmd.Env = withProxy(cleanEnv(), setup.Proxy)
 		detach(cmd)
@@ -150,11 +157,6 @@ func Open(ctx context.Context, dir string, setup Setup) (*Client, error) {
 	}
 	if free {
 		filelock.Release(host)
-		if setup.MayLaunch != nil {
-			if err := setup.MayLaunch(); err != nil {
-				return nil, err
-			}
-		}
 		if err := launch(); err != nil {
 			return nil, err
 		}
@@ -185,11 +187,6 @@ func Open(ctx context.Context, dir string, setup Setup) (*Client, error) {
 			}
 			if unlocked {
 				filelock.Release(host)
-				if setup.MayLaunch != nil {
-					if err := setup.MayLaunch(); err != nil {
-						return nil, err
-					}
-				}
 				free = true
 				if err := launch(); err != nil {
 					return nil, err

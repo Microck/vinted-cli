@@ -11,6 +11,7 @@ import (
 
 	sdk "github.com/Microck/galleton/client"
 
+	"github.com/Microck/vinted-cli/internal/cli"
 	"github.com/Microck/vinted-cli/internal/testutil"
 )
 
@@ -217,6 +218,27 @@ func TestBlockedEngineRenewalStartsTheCooldown(t *testing.T) {
 	}
 	if until := h.pausedUntil(); until == nil {
 		t.Fatal("the engine was not paused after its renewal was blocked")
+	}
+}
+
+// A renewal block that no command saw (the engine's own scheduler hit it)
+// still starts the shared cooldown while `auth service run` watches it.
+func TestAuthServiceRunReportsAnEngineRenewalBlock(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.fake.setBlock("/web/api/auth/refresh", datadomeBlock(t))
+	if r := h.run("", "auth", "refresh"); r.code != 5 {
+		t.Fatalf("blocked renewal: exit %d\n%s", r.code, r.stderr)
+	}
+	// Forget the cooldown the command recorded: the engine still holds the
+	// session in its blocked back-off, as after a scheduled renewal.
+	h.must("", "cooldown", "clear", "--yes")
+	stop := make(chan struct{})
+	t.Cleanup(cli.UseServiceLoop(50*time.Millisecond, stop))
+	time.AfterFunc(time.Second, func() { close(stop) })
+	h.must("", "auth", "service", "run")
+	if cd := decode[map[string]any](t, h.must("", "cooldown").stdout); cd["blocked"] != true {
+		t.Fatalf("auth service run did not record the engine's renewal block: %v", cd)
 	}
 }
 
