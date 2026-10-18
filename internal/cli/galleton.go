@@ -135,7 +135,7 @@ func (a *App) sessionsClient(ctx context.Context) (*galleton.Client, error) {
 	if galleton.Configured() {
 		c, err := galleton.FromEnv()
 		if err != nil {
-			return nil, nil
+			return nil, err
 		}
 		return c, nil
 	}
@@ -493,7 +493,12 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 		forget(id, "new")
 		return fmt.Errorf("config.toml could not be saved, so the profile keeps its previous session: %w", err)
 	}
-	a.Creds.Profiles[a.Profile] = config.Session{GalletonID: id, UserID: me.ID, Login: me.Login, UpdatedAt: time.Now().UTC()}
+	// The sessions this login replaces are recorded in the same write, so a
+	// crash before they are deleted still leaves them reachable for cleanup.
+	if previous != "" && previous != id {
+		pending = append(pending, previous)
+	}
+	a.Creds.Profiles[a.Profile] = config.Session{GalletonID: id, Replaced: pending, UserID: me.ID, Login: me.Login, UpdatedAt: time.Now().UTC()}
 	if err := a.saveCreds(); err != nil {
 		a.Cfg.DefaultProfile = oldDefault
 		if hadProfile {
@@ -510,9 +515,6 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 	// Delete the replaced session (and any left from earlier logins). One
 	// that cannot be deleted now stays recorded and is retried later, so no
 	// unreferenced credential is left renewing in the vault.
-	if previous != "" && previous != id {
-		pending = append(pending, previous)
-	}
 	a.dropReplaced(ctx, c, pending)
 	return a.Printer.Print(a.currentStatus())
 }
