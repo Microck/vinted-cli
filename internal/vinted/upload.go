@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"mime/multipart"
 	"net/http"
@@ -31,6 +32,9 @@ type Photo struct {
 	ID       int64  `json:"id"`
 	URL      string `json:"url"`
 	TempUUID string `json:"temp_uuid"`
+	// Unparsed holds, by JSON path, answer parts in a shape the cli does
+	// not know.
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }
 
 // UploadAttribute is one category-specific field of the upload form: size,
@@ -42,6 +46,10 @@ type UploadAttribute struct {
 	Multi    bool              `json:"multi"`
 	Limit    int               `json:"limit,omitempty"`
 	Options  []AttributeOption `json:"options"`
+	// Unparsed holds, by JSON path, parts of the attribute in a shape the
+	// cli does not know ("configuration.options.2"). A whole attribute it
+	// could not read appears without a code, under "attributes.N".
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }
 
 // AttributeOption is one selectable value (an id the API takes, a title users read).
@@ -62,6 +70,9 @@ type PackageSize struct {
 	Code  string `json:"code"`
 	Title string `json:"title"`
 	Name  string `json:"name"`
+	// Unparsed holds, by JSON path, parts of the size in a shape the cli
+	// does not know.
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }
 
 // ItemInput is everything the upload form submits for a new Item.
@@ -138,10 +149,11 @@ func (c *Client) UploadPhoto(ctx context.Context, img UploadImage, tempUUID stri
 	if err := mw.Close(); err != nil {
 		return Photo{}, err
 	}
+	// The photo is stored once this answers, so only its id may fail it.
 	var out struct {
-		ID       flexInt `json:"id"`
-		URL      string  `json:"url"`
-		TempUUID string  `json:"temp_uuid"`
+		ID       flexInt         `json:"id"`
+		URL      lenient[string] `json:"url"`
+		TempUUID lenient[string] `json:"temp_uuid"`
 	}
 	if _, err := c.do(ctx, request{method: http.MethodPost, path: "/api/v2/photos", raw: buf.Bytes(), contentType: mw.FormDataContentType(), auth: true, csrf: true}, &out); err != nil {
 		return Photo{}, err
@@ -149,26 +161,58 @@ func (c *Client) UploadPhoto(ctx context.Context, img UploadImage, tempUUID stri
 	if out.ID == 0 {
 		return Photo{}, &Error{Kind: KindAPIChanged, Endpoint: "POST /api/v2/photos", Msg: "vinted accepted the photo but returned no photo id"}
 	}
-	return Photo{ID: int64(out.ID), URL: out.URL, TempUUID: out.TempUUID}, nil
+	p := Photo{ID: int64(out.ID), URL: out.URL.V, TempUUID: out.TempUUID.V}
+	keepRaw(&p.Unparsed, "url", out.URL.Raw)
+	keepRaw(&p.Unparsed, "temp_uuid", out.TempUUID.Raw)
+	return p, nil
 }
 
+// rawAttributeOptions keeps each option lenient on its own, so one option of
+// another shape does not cost the attribute its other options.
+type rawAttributeOptions []lenient[rawAttributeOption]
+
+// rawAttributeOption is one option or option group; its id and title are core.
 type rawAttributeOption struct {
-	ID      flexInt              `json:"id"`
-	Title   string               `json:"title"`
-	Type    string               `json:"type"`
-	Options []rawAttributeOption `json:"options"`
+	ID      flexInt                      `json:"id"`
+	Title   string                       `json:"title"`
+	Type    lenient[string]              `json:"type"`
+	Options lenient[rawAttributeOptions] `json:"options"`
 }
 
-// flatten collects the selectable leaves under option groups.
-func flattenOptions(in []rawAttributeOption, out []AttributeOption) []AttributeOption {
-	for _, o := range in {
-		if len(o.Options) > 0 || o.Type == "group" {
-			out = flattenOptions(o.Options, out)
+// flattenOptions collects the selectable leaves under option groups found
+// at path, recording in *unparsed the parts it could not read.
+func flattenOptions(list lenient[rawAttributeOptions], out []AttributeOption, unparsed *map[string]json.RawMessage, path string) []AttributeOption {
+	keepRaw(unparsed, path, list.Raw)
+	for i, lo := range list.V {
+		at := path + "." + strconv.Itoa(i)
+		if lo.Raw != nil {
+			keepRaw(unparsed, at, lo.Raw)
+			continue
+		}
+		o := lo.V
+		keepRaw(unparsed, at+".type", o.Type.Raw)
+		if len(o.Options.V) > 0 || o.Options.Raw != nil || o.Type.V == "group" {
+			out = flattenOptions(o.Options, out, unparsed, at+".options")
 			continue
 		}
 		out = append(out, AttributeOption{ID: int(o.ID), Title: o.Title})
 	}
 	return out
+}
+
+// rawUploadAttribute is one field of the upload form. Its code is core; the
+// configuration is lenient part by part.
+type rawUploadAttribute struct {
+	Code          string                       `json:"code"`
+	Configuration lenient[*rawAttributeConfig] `json:"configuration"`
+}
+
+type rawAttributeConfig struct {
+	Title          lenient[string]              `json:"title"`
+	Required       lenient[bool]                `json:"required"`
+	SelectionType  lenient[string]              `json:"selection_type"`
+	SelectionLimit flexInt                      `json:"selection_limit"`
+	Options        lenient[rawAttributeOptions] `json:"options"`
 }
 
 // UploadAttributes lists the category-specific fields of the upload form
@@ -180,31 +224,34 @@ func (c *Client) UploadAttributes(ctx context.Context, catalogID int) ([]UploadA
 	}
 	body := map[string]any{"attributes": []map[string]any{{"code": "category", "value": []int{catalogID}}}}
 	var out struct {
-		Attributes []struct {
-			Code          string `json:"code"`
-			Configuration *struct {
-				Title          string               `json:"title"`
-				Required       bool                 `json:"required"`
-				SelectionType  string               `json:"selection_type"`
-				SelectionLimit int                  `json:"selection_limit"`
-				Options        []rawAttributeOption `json:"options"`
-			} `json:"configuration"`
-		} `json:"attributes"`
+		Attributes []lenient[rawUploadAttribute] `json:"attributes"`
 	}
 	if _, err := c.do(ctx, request{method: http.MethodPost, path: "/api/v2/item_upload/attributes", body: body, auth: true, csrf: true}, &out); err != nil {
 		return nil, err
 	}
 	attrs := make([]UploadAttribute, 0, len(out.Attributes))
-	for _, a := range out.Attributes {
-		if a.Configuration == nil || a.Code == "" {
+	for i, la := range out.Attributes {
+		if la.Raw != nil {
+			a := UploadAttribute{Options: []AttributeOption{}}
+			keepRaw(&a.Unparsed, "attributes."+strconv.Itoa(i), la.Raw)
+			attrs = append(attrs, a)
 			continue
 		}
-		cfg := a.Configuration
-		attrs = append(attrs, UploadAttribute{
-			Code: a.Code, Title: cfg.Title, Required: cfg.Required,
-			Multi: cfg.SelectionType == "multi", Limit: cfg.SelectionLimit,
-			Options: flattenOptions(cfg.Options, []AttributeOption{}),
-		})
+		ra := la.V
+		if ra.Code == "" || (ra.Configuration.V == nil && ra.Configuration.Raw == nil) {
+			continue
+		}
+		a := UploadAttribute{Code: ra.Code, Options: []AttributeOption{}}
+		keepRaw(&a.Unparsed, "configuration", ra.Configuration.Raw)
+		if cfg := ra.Configuration.V; cfg != nil {
+			a.Title, a.Required = cfg.Title.V, cfg.Required.V
+			a.Multi, a.Limit = cfg.SelectionType.V == "multi", int(cfg.SelectionLimit)
+			a.Options = flattenOptions(cfg.Options, a.Options, &a.Unparsed, "configuration.options")
+			keepRaw(&a.Unparsed, "configuration.title", cfg.Title.Raw)
+			keepRaw(&a.Unparsed, "configuration.required", cfg.Required.Raw)
+			keepRaw(&a.Unparsed, "configuration.selection_type", cfg.SelectionType.Raw)
+		}
+		attrs = append(attrs, a)
 	}
 	return attrs, nil
 }
@@ -256,10 +303,10 @@ func (c *Client) PackageSizes(ctx context.Context, catalogID int) ([]PackageSize
 	}
 	var out struct {
 		PackageSizes []struct {
-			ID    flexInt `json:"id"`
-			Code  string  `json:"code"`
-			Title string  `json:"title"`
-			Name  string  `json:"name"`
+			ID    flexInt         `json:"id"`
+			Code  string          `json:"code"`
+			Title lenient[string] `json:"title"`
+			Name  lenient[string] `json:"name"`
 		} `json:"package_sizes"`
 	}
 	path := "/shipping-estimation/external/catalogs/" + strconv.Itoa(catalogID) + "/package_sizes"
@@ -268,7 +315,10 @@ func (c *Client) PackageSizes(ctx context.Context, catalogID int) ([]PackageSize
 	}
 	sizes := make([]PackageSize, 0, len(out.PackageSizes))
 	for _, p := range out.PackageSizes {
-		sizes = append(sizes, PackageSize{ID: int(p.ID), Code: p.Code, Title: p.Title, Name: p.Name})
+		s := PackageSize{ID: int(p.ID), Code: p.Code, Title: p.Title.V, Name: p.Name.V}
+		keepRaw(&s.Unparsed, "title", p.Title.Raw)
+		keepRaw(&s.Unparsed, "name", p.Name.Raw)
+		sizes = append(sizes, s)
 	}
 	return sizes, nil
 }
@@ -331,18 +381,42 @@ func nullInt(v int) any {
 // rawUploadedItem is the item or draft the upload endpoints answer with.
 type rawUploadedItem struct {
 	rawAPIItem
-	IsDraft bool `json:"is_draft"`
+	IsDraft lenient[bool] `json:"is_draft"`
 }
 
-func (c *Client) uploadedItem(endpoint string, item, draft *rawUploadedItem) (UploadedItem, error) {
-	r := item
-	if r == nil {
-		r = draft
+// uploadAnswer is the body of the create, draft and edit calls. Both parts
+// are lenient: the write has already happened when it arrives, so an odd
+// shape must not turn it into an error.
+type uploadAnswer struct {
+	Item  lenient[*rawUploadedItem] `json:"item"`
+	Draft lenient[*rawUploadedItem] `json:"draft"`
+}
+
+func (c *Client) uploadedItem(endpoint string, ans uploadAnswer) (UploadedItem, error) {
+	key, part, draft := "item", ans.Item, false
+	if part.V == nil && part.Raw == nil {
+		key, part, draft = "draft", ans.Draft, ans.Draft.V != nil || ans.Draft.Raw != nil
 	}
+	if part.Raw != nil {
+		// Kept whole, with the id when it can still be read.
+		var core struct {
+			ID flexInt `json:"id"`
+		}
+		_ = json.Unmarshal(part.Raw, &core)
+		if core.ID == 0 {
+			return UploadedItem{}, &Error{Kind: KindAPIChanged, Endpoint: endpoint, Body: c.snippet(part.Raw), Msg: "vinted accepted the item but returned it in a shape the cli cannot read"}
+		}
+		up := UploadedItem{Item: Item{ID: int64(core.ID), URL: c.absURL("", int64(core.ID))}, Draft: draft}
+		keepRaw(&up.Unparsed, key, part.Raw)
+		return up, nil
+	}
+	r := part.V
 	if r == nil || r.ID == 0 {
 		return UploadedItem{}, &Error{Kind: KindAPIChanged, Endpoint: endpoint, Msg: "vinted accepted the item but did not return it"}
 	}
-	return UploadedItem{Item: c.normalizeAPIItem(r.rawAPIItem), Draft: draft != nil || r.IsDraft}, nil
+	up := UploadedItem{Item: c.normalizeAPIItem(r.rawAPIItem), Draft: draft || r.IsDraft.V}
+	keepRaw(&up.Unparsed, "is_draft", r.IsDraft.Raw)
+	return up, nil
 }
 
 // CreateItem uploads the photos and publishes the listing, or saves it as
@@ -357,10 +431,7 @@ func (c *Client) CreateItem(ctx context.Context, in ItemInput, draft bool) (Uplo
 		return UploadedItem{}, err
 	}
 	item := itemForm(in, tempUUID, photos)
-	var out struct {
-		Item  *rawUploadedItem `json:"item"`
-		Draft *rawUploadedItem `json:"draft"`
-	}
+	var out uploadAnswer
 	r := request{method: http.MethodPost, auth: true, csrf: true}
 	if draft {
 		r.path = "/api/v2/item_upload/drafts"
@@ -373,7 +444,7 @@ func (c *Client) CreateItem(ctx context.Context, in ItemInput, draft bool) (Uplo
 	if _, err := c.do(ctx, r, &out); err != nil {
 		return UploadedItem{}, err
 	}
-	up, err := c.uploadedItem(r.method+" "+r.path, out.Item, out.Draft)
+	up, err := c.uploadedItem(r.method+" "+r.path, out)
 	if err != nil {
 		return up, err
 	}
@@ -539,14 +610,12 @@ func (c *Client) EditItem(ctx context.Context, id int64, e ItemEdit) (UploadedIt
 		form["temp_uuid"] = tempUUID
 		form["assigned_photos"] = photos
 	}
-	var out struct {
-		Item *rawUploadedItem `json:"item"`
-	}
+	var out uploadAnswer
 	body := map[string]any{"item": form, "push_up": false, "parcel": nil, "upload_session_id": newUUID()}
 	if _, err := c.do(ctx, request{method: http.MethodPut, path: path, body: body, auth: true, csrf: true}, &out); err != nil {
 		return UploadedItem{}, notFoundAs(err, "item %d is not one of your items", id)
 	}
-	up, err := c.uploadedItem("PUT "+path, out.Item, nil)
+	up, err := c.uploadedItem("PUT "+path, out)
 	if err != nil {
 		return up, err
 	}

@@ -60,7 +60,7 @@ func isBlock(status int, raw []byte) bool {
 		return false
 	}
 	var env apiEnvelope
-	if json.Unmarshal(raw, &env) == nil && (env.Code != 0 || env.Message != "" || env.MessageCode != "") {
+	if json.Unmarshal(raw, &env) == nil && (env.Code != 0 || env.Message.V != "" || env.MessageCode.V != "") {
 		return false
 	}
 	return true

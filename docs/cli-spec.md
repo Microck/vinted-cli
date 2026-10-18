@@ -92,6 +92,12 @@ server-rendered; their data sits in the escaped React Server Components payload
 and `\"total_entries\":960`). The parser extracts it there. A page whose payload no longer
 matches is exit 7, never an empty result.
 
+Only the core of a response is strict: the ids and the object a command exists to return.
+An optional part in a shape the CLI does not know (a badge given as a string, an item block
+it has no reader for, one odd entry in a list) does not fail the command. Its raw JSON goes
+into the output's `unparsed` object, keyed by its JSON path (`plugins.user_info_header.badges.1`,
+`items.3`), so no data is dropped.
+
 Datadome and Cloudflare front every host. Requests carry a real browser user agent;
 a challenge page is exit 5.
 

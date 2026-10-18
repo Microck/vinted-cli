@@ -508,31 +508,58 @@ func (c *Client) netError(endpoint string, err error) error {
 }
 
 // apiEnvelope is Vinted's error body: {"code":115,"message":"...","message_code":"user_verification_required"}.
-// Validation failures (code 99) list the offending fields in errors.
+// Validation failures (code 99) list the offending fields in errors. The
+// gateway's codes are strings ("BAD_REQUEST"), which read as 0 here; the raw
+// body always reaches the Error's Body.
 type apiEnvelope struct {
-	Code        int    `json:"code"`
-	Message     string `json:"message"`
-	MessageCode string `json:"message_code"`
-	Errors      []struct {
-		Field string `json:"field"`
-		Value string `json:"value"`
-	} `json:"errors"`
+	Code        flexInt                           `json:"code"`
+	Message     lenient[string]                   `json:"message"`
+	MessageCode lenient[string]                   `json:"message_code"`
+	Errors      lenient[[]lenient[apiFieldError]] `json:"errors"`
+}
+
+// apiFieldError is one entry of a validation envelope. Value is read as a
+// message or a list of messages; any other shape is shown as JSON.
+type apiFieldError struct {
+	Field string          `json:"field"`
+	Value json.RawMessage `json:"value"`
 }
 
 // fieldErrors renders a validation envelope's per-field messages.
 func (env apiEnvelope) fieldErrors() string {
-	parts := make([]string, 0, len(env.Errors))
-	for _, fe := range env.Errors {
+	parts := make([]string, 0, len(env.Errors.V))
+	for _, le := range env.Errors.V {
+		fe := le.V
+		value := fieldErrorText(fe.Value)
 		switch {
-		case fe.Field != "" && fe.Value != "":
-			parts = append(parts, fe.Field+": "+fe.Value)
-		case fe.Value != "":
-			parts = append(parts, fe.Value)
+		case fe.Field != "" && value != "":
+			parts = append(parts, fe.Field+": "+value)
+		case value != "":
+			parts = append(parts, value)
 		case fe.Field != "":
 			parts = append(parts, fe.Field)
+		case le.Raw != nil:
+			parts = append(parts, string(le.Raw))
 		}
 	}
 	return strings.Join(parts, "; ")
+}
+
+// fieldErrorText reads a validation message given as a string or a list of
+// strings, and shows any other shape as its JSON.
+func fieldErrorText(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var list []string
+	if json.Unmarshal(raw, &list) == nil {
+		return strings.Join(list, ", ")
+	}
+	return string(raw)
 }
 
 // statusError classifies a non-2xx answer from Vinted itself. Blocks never
@@ -542,41 +569,42 @@ func (c *Client) statusError(endpoint string, status int, raw []byte) error {
 	e := &Error{Status: status, Endpoint: endpoint, Body: c.snippet(raw)}
 	var env apiEnvelope
 	_ = json.Unmarshal(raw, &env)
-	e.APICode = env.Code
+	code, msg, msgCode := int(env.Code), env.Message.V, env.MessageCode.V
+	e.APICode = code
 	switch {
-	case env.MessageCode == "user_verification_required" || env.Code == 115:
+	case msgCode == "user_verification_required" || code == 115:
 		e.Kind = KindAuth
 		// The web app answers code 115 by sending the user to this page.
 		e.Msg = "vinted requires this account to be verified before it can use this feature. Open " + c.Base + "/users/verification while logged in, complete the verification it asks for, then retry"
 		e.Suggest = []string{"open " + c.Base + "/users/verification"}
-	case status == http.StatusUnauthorized || env.MessageCode == "invalid_authentication_token":
+	case status == http.StatusUnauthorized || msgCode == "invalid_authentication_token":
 		e.Kind = KindAuth
 		e.Msg = "vinted rejected the session. Run `vinted auth login` again"
 	case status == http.StatusForbidden:
 		e.Kind = KindGeneric
 		e.Msg = "vinted refused the request (HTTP 403)"
-		if env.Message != "" {
-			e.Msg = "vinted refused the request: " + env.Message
+		if msg != "" {
+			e.Msg = "vinted refused the request: " + msg
 		}
 	case status == http.StatusNotFound || status == http.StatusGone:
 		e.Kind = KindNotFound
 		e.Msg = "vinted has nothing at " + endpoint
-		if env.Message != "" {
-			e.Msg = env.Message
+		if msg != "" {
+			e.Msg = msg
 		}
 	case status >= 500:
 		e.Kind = KindGeneric
 		e.Retryable = true
 		e.Msg = fmt.Sprintf("vinted answered HTTP %d. Try again later", status)
-	case env.MessageCode == "validation_error" && len(env.Errors) > 0:
+	case msgCode == "validation_error" && len(env.Errors.V) > 0:
 		// The request's own fields were wrong: the caller can fix them.
 		e.Kind = KindUsage
 		e.Msg = "vinted rejected the input: " + env.fieldErrors()
 	case status == http.StatusBadRequest || status == http.StatusUnprocessableEntity || status == http.StatusConflict:
 		e.Kind = KindGeneric
 		e.Msg = fmt.Sprintf("vinted refused the request (HTTP %d)", status)
-		if env.Message != "" {
-			e.Msg = env.Message
+		if msg != "" {
+			e.Msg = msg
 		}
 	default:
 		e.Kind = KindAPIChanged

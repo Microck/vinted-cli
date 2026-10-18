@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -128,7 +129,11 @@ func printMessage(w io.Writer, color bool, m vinted.Message, other string) {
 	if m.FromSelf {
 		who = "me"
 	}
-	fmt.Fprintf(w, "%s %s: %s\n", output.Dim(m.At.Local().Format("01-02 15:04"), color), who, m.Text)
+	text := m.Text
+	if text == "" && len(m.Unparsed) > 0 {
+		text = output.Dim("(a message the cli cannot read; see --format json)", color)
+	}
+	fmt.Fprintf(w, "%s %s: %s\n", output.Dim(m.At.Local().Format("01-02 15:04"), color), who, text)
 }
 
 func (a *App) chatShowCmd() *cobra.Command {
@@ -162,6 +167,9 @@ type sentView struct {
 	MessageID    int64  `json:"message_id,omitempty"`
 	Text         string `json:"text"`
 	To           string `json:"to,omitempty"`
+	// Unparsed carries the parts of Vinted's answer the client could not
+	// read (see vinted.Message.Unparsed and vinted.Conversation.Unparsed).
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }
 
 func (s sentView) Pretty(w io.Writer, color bool) {
@@ -192,7 +200,7 @@ func (a *App) chatSendCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return a.Printer.Print(sentView{Conversation: id, MessageID: m.ID, Text: text, To: conv.WithUser.Login})
+			return a.Printer.Print(sentView{Conversation: id, MessageID: m.ID, Text: text, To: conv.WithUser.Login, Unparsed: m.Unparsed})
 		},
 	}
 }
@@ -219,10 +227,18 @@ func (a *App) chatStartCmd() *cobra.Command {
 				return err
 			}
 			var msgID int64
+			unparsed := conv.Unparsed
 			if n := len(conv.Messages); n > 0 {
-				msgID = conv.Messages[n-1].ID
+				last := conv.Messages[n-1]
+				msgID = last.ID
+				for k, raw := range last.Unparsed {
+					if unparsed == nil {
+						unparsed = map[string]json.RawMessage{}
+					}
+					unparsed[k] = raw
+				}
 			}
-			return a.Printer.Print(sentView{Conversation: conv.ID, MessageID: msgID, Text: text, To: conv.WithUser.Login})
+			return a.Printer.Print(sentView{Conversation: conv.ID, MessageID: msgID, Text: text, To: conv.WithUser.Login, Unparsed: unparsed})
 		},
 	}
 }

@@ -16,84 +16,99 @@ import (
 // Accounts Vinted has not verified get code 115 (user_verification_required)
 // from the inbox, which statusError turns into a KindAuth with instructions.
 
-type rawChatUser struct {
+// rawUserRef is the {id, login} stub Vinted embeds for another member: the
+// other side of a conversation, an item's seller, a review's author.
+type rawUserRef struct {
 	ID    flexInt `json:"id"`
 	Login string  `json:"login"`
 }
 
 // rawConversationSummary is one inbox row.
 type rawConversationSummary struct {
-	ID           flexInt     `json:"id"`
-	Description  string      `json:"description"`
-	Unread       bool        `json:"unread"`
-	UpdatedAt    flexTime    `json:"updated_at"`
-	OppositeUser rawChatUser `json:"opposite_user"`
+	ID           flexInt             `json:"id"`
+	Description  string              `json:"description"`
+	Unread       bool                `json:"unread"`
+	UpdatedAt    flexTime            `json:"updated_at"`
+	OppositeUser lenient[rawUserRef] `json:"opposite_user"`
 }
 
 // rawMessage is one entry of a conversation's messages list. Only
 // entity_type "message" carries a body; status and offer events carry a
-// title (and subtitle) instead.
+// title (and subtitle) instead. The entity's shape depends on the entity
+// type, so it is read leniently.
 type rawMessage struct {
-	ID          flexInt  `json:"id"`
-	EntityType  string   `json:"entity_type"`
-	CreatedAtTS flexTime `json:"created_at_ts"`
-	CreatedAt   flexTime `json:"created_at"`
-	Entity      struct {
-		ID       flexInt `json:"id"`
-		Body     string  `json:"body"`
-		Title    string  `json:"title"`
-		Subtitle string  `json:"subtitle"`
-		UserID   flexInt `json:"user_id"`
-		// Offer events only.
-		Price    flexMoneyAmount `json:"price"`
-		Currency string          `json:"currency"`
-		Status   json.RawMessage `json:"status"`
-	} `json:"entity"`
+	ID          flexInt                   `json:"id"`
+	EntityType  string                    `json:"entity_type"`
+	CreatedAtTS flexTime                  `json:"created_at_ts"`
+	CreatedAt   flexTime                  `json:"created_at"`
+	Entity      lenient[rawMessageEntity] `json:"entity"`
+}
+
+type rawMessageEntity struct {
+	ID       flexInt `json:"id"`
+	Body     string  `json:"body"`
+	Title    string  `json:"title"`
+	Subtitle string  `json:"subtitle"`
+	UserID   flexInt `json:"user_id"`
+	// Offer events only.
+	Price    flexMoneyAmount `json:"price"`
+	Currency string          `json:"currency"`
+	Status   json.RawMessage `json:"status"`
 }
 
 type rawConversation struct {
-	ID            flexInt      `json:"id"`
-	Unread        bool         `json:"unread"`
-	ReadByCurrent *bool        `json:"read_by_current_user"`
-	UpdatedAt     flexTime     `json:"updated_at"`
-	Description   string       `json:"description"`
-	OppositeUser  rawChatUser  `json:"opposite_user"`
-	Messages      []rawMessage `json:"messages"`
-	Transaction   *struct {
-		ItemID     flexInt   `json:"item_id"`
-		ItemTitle  string    `json:"item_title"`
-		OfferPrice *rawMoney `json:"offer_price"`
-	} `json:"transaction"`
+	ID            flexInt               `json:"id"`
+	Unread        bool                  `json:"unread"`
+	ReadByCurrent *bool                 `json:"read_by_current_user"`
+	UpdatedAt     flexTime              `json:"updated_at"`
+	Description   string                `json:"description"`
+	OppositeUser  lenient[rawUserRef]   `json:"opposite_user"`
+	Messages      []lenient[rawMessage] `json:"messages"`
+	Transaction   lenient[*struct {
+		ItemID     flexInt         `json:"item_id"`
+		ItemTitle  string          `json:"item_title"`
+		OfferPrice flexMoneyAmount `json:"offer_price"`
+	}] `json:"transaction"`
 }
 
 // UnreadCount is the badge on the envelope icon.
 func (c *Client) UnreadCount(ctx context.Context) (int, error) {
 	var out struct {
-		UnreadMsgCount int `json:"unread_msg_count"`
+		UnreadMsgCount flexInt `json:"unread_msg_count"`
 	}
 	if err := c.getJSON(ctx, "/api/v2/conversations/stats", nil, true, &out); err != nil {
 		return 0, err
 	}
-	return out.UnreadMsgCount, nil
+	return int(out.UnreadMsgCount), nil
 }
 
-// Inbox lists conversations, most recent first, without their messages.
+// Inbox lists conversations, most recent first, without their messages. A
+// row in an unknown shape is kept whole in its entry's Unparsed.
 func (c *Client) Inbox(ctx context.Context, page, perPage int) ([]Conversation, error) {
 	var out struct {
-		Conversations []rawConversationSummary `json:"conversations"`
+		Conversations []lenient[rawConversationSummary] `json:"conversations"`
 	}
 	if err := c.getJSON(ctx, "/api/v2/inbox", pageQuery(page, perPage), true, &out); err != nil {
 		return nil, err
 	}
 	convs := make([]Conversation, 0, len(out.Conversations))
-	for _, r := range out.Conversations {
-		convs = append(convs, Conversation{
+	for i, lr := range out.Conversations {
+		var conv Conversation
+		if lr.Raw != nil {
+			keepRaw(&conv.Unparsed, "conversations."+strconv.Itoa(i), lr.Raw)
+			convs = append(convs, conv)
+			continue
+		}
+		r := lr.V
+		conv = Conversation{
 			ID:          int64(r.ID),
-			WithUser:    ChatUser{ID: int64(r.OppositeUser.ID), Login: r.OppositeUser.Login},
+			WithUser:    ChatUser{ID: int64(r.OppositeUser.V.ID), Login: r.OppositeUser.V.Login},
 			Unread:      r.Unread,
 			UpdatedAt:   r.UpdatedAt.Time,
 			LastMessage: r.Description,
-		})
+		}
+		keepRaw(&conv.Unparsed, "opposite_user", r.OppositeUser.Raw)
+		convs = append(convs, conv)
 	}
 	return convs, nil
 }
@@ -103,11 +118,15 @@ func (c *Client) Conversation(ctx context.Context, id int64) (Conversation, erro
 	if id <= 0 {
 		return Conversation{}, Usage("conversation id must be positive")
 	}
+	path := "/api/v2/conversations/" + strconv.FormatInt(id, 10)
 	var out struct {
 		Conversation rawConversation `json:"conversation"`
 	}
-	if err := c.getJSON(ctx, "/api/v2/conversations/"+strconv.FormatInt(id, 10), nil, true, &out); err != nil {
+	if err := c.getJSON(ctx, path, nil, true, &out); err != nil {
 		return Conversation{}, notFoundAs(err, "conversation %d does not exist", id)
+	}
+	if out.Conversation.ID == 0 {
+		return Conversation{}, &Error{Kind: KindAPIChanged, Endpoint: "GET " + path, Msg: "vinted returned a conversation without its id"}
 	}
 	return c.normalizeConversation(out.Conversation), nil
 }
@@ -119,19 +138,26 @@ func (c *Client) normalizeConversation(r rawConversation) Conversation {
 	}
 	conv := Conversation{
 		ID:          int64(r.ID),
-		WithUser:    ChatUser{ID: int64(r.OppositeUser.ID), Login: r.OppositeUser.Login},
+		WithUser:    ChatUser{ID: int64(r.OppositeUser.V.ID), Login: r.OppositeUser.V.Login},
 		Unread:      r.Unread,
 		UpdatedAt:   r.UpdatedAt.Time,
 		LastMessage: r.Description,
 	}
+	keepRaw(&conv.Unparsed, "opposite_user", r.OppositeUser.Raw)
+	keepRaw(&conv.Unparsed, "transaction", r.Transaction.Raw)
 	if r.ReadByCurrent != nil {
 		conv.Unread = !*r.ReadByCurrent
 	}
-	if t := r.Transaction; t != nil {
-		conv.Item = ChatItem{ID: int64(t.ItemID), Title: t.ItemTitle, Price: t.OfferPrice.amount(), Currency: t.OfferPrice.currency()}
+	if t := r.Transaction.V; t != nil {
+		conv.Item = ChatItem{ID: int64(t.ItemID), Title: t.ItemTitle, Price: t.OfferPrice.Amount, Currency: t.OfferPrice.Currency}
+		keepRaw(&conv.Unparsed, "transaction.offer_price", t.OfferPrice.Raw)
 	}
-	for _, m := range r.Messages {
-		msg, ok := normalizeMessage(m, me, conv.WithUser.ID)
+	for i, lm := range r.Messages {
+		if lm.Raw != nil {
+			keepRaw(&conv.Unparsed, "messages."+strconv.Itoa(i), lm.Raw)
+			continue
+		}
+		msg, ok := normalizeMessage(lm.V, me, conv.WithUser.ID)
 		if !ok {
 			continue
 		}
@@ -146,18 +172,24 @@ func (c *Client) normalizeConversation(r rawConversation) Conversation {
 	return conv
 }
 
+// normalizeMessage reads one message. ok is false for an event with nothing
+// to show; an entity in an unknown shape is kept in Unparsed instead.
 func normalizeMessage(m rawMessage, me, other int64) (Message, bool) {
-	text := m.Entity.Body
+	e := m.Entity.V
+	var unparsed map[string]json.RawMessage
+	keepRaw(&unparsed, "entity", m.Entity.Raw)
+	keepRaw(&unparsed, "entity.price", e.Price.Raw)
+	text := e.Body
 	if text == "" {
-		text = strings.TrimSpace(m.Entity.Title + "\n" + m.Entity.Subtitle)
+		text = strings.TrimSpace(e.Title + "\n" + e.Subtitle)
 	}
 	if m.EntityType == "offer_request_message" || m.EntityType == "offer_message" {
 		text = offerText(m, text)
 	}
-	if text == "" {
+	if text == "" && unparsed == nil {
 		return Message{}, false
 	}
-	id := int64(m.Entity.ID)
+	id := int64(e.ID)
 	if id == 0 {
 		id = int64(m.ID)
 	}
@@ -165,16 +197,16 @@ func normalizeMessage(m rawMessage, me, other int64) (Message, bool) {
 	if at.IsZero() {
 		at = m.CreatedAt.Time
 	}
-	from := int64(m.Entity.UserID)
+	from := int64(e.UserID)
 	// System events have no author; they are never from self.
 	fromSelf := from != 0 && ((me != 0 && from == me) || (me == 0 && other != 0 && from != other))
-	return Message{ID: id, FromSelf: fromSelf, Text: text, At: at}, true
+	return Message{ID: id, FromSelf: fromSelf, Text: text, At: at, Unparsed: unparsed}, true
 }
 
 // offerText labels an offer event, whose title is only the amount ("$60.00"),
 // so a transcript tells it apart from a typed message.
 func offerText(m rawMessage, amount string) string {
-	e := m.Entity
+	e := m.Entity.V
 	if amount == "" && e.Price.Amount > 0 {
 		amount = formatAmount(e.Price.Amount) + " " + firstNonEmpty(e.Currency, e.Price.Currency)
 	}
@@ -206,32 +238,38 @@ func (c *Client) SendMessage(ctx context.Context, convID int64, text string) (Me
 		"photo_temp_uuids":                       nil,
 		"is_personal_data_sharing_check_skipped": false,
 	}}
+	// The message is sent once Vinted answers 2xx; the echo only enriches
+	// it, so an echo in an unknown shape must not turn the send into an error.
 	var out struct {
-		Conversation *rawConversation `json:"conversation"`
-		Reply        *struct {
+		Conversation lenient[*rawConversation] `json:"conversation"`
+		Reply        lenient[*struct {
 			ID        flexInt  `json:"id"`
 			Body      string   `json:"body"`
 			CreatedAt flexTime `json:"created_at_ts"`
-		} `json:"reply"`
+		}] `json:"reply"`
 	}
 	_, err := c.do(ctx, request{method: http.MethodPost, path: "/api/v2/conversations/" + strconv.FormatInt(convID, 10) + "/replies", body: body, auth: true, csrf: true}, &out)
 	if err != nil {
 		return Message{}, notFoundAs(err, "conversation %d does not exist", convID)
 	}
 	// The response echoes the conversation; the newest own message is ours.
-	if out.Conversation != nil {
-		conv := c.normalizeConversation(*out.Conversation)
+	if out.Conversation.V != nil {
+		conv := c.normalizeConversation(*out.Conversation.V)
 		for i := len(conv.Messages) - 1; i >= 0; i-- {
 			if m := conv.Messages[i]; m.FromSelf && m.Text == text {
 				return m, nil
 			}
 		}
 	}
+	// Not found in the echo: the message is built from the request, and an
+	// unreadable echo is kept since it holds the message's id and time.
 	msg := Message{FromSelf: true, Text: text, At: time.Now()}
-	if out.Reply != nil {
-		msg.ID = int64(out.Reply.ID)
-		if !out.Reply.CreatedAt.IsZero() {
-			msg.At = out.Reply.CreatedAt.Time
+	keepRaw(&msg.Unparsed, "conversation", out.Conversation.Raw)
+	keepRaw(&msg.Unparsed, "reply", out.Reply.Raw)
+	if r := out.Reply.V; r != nil {
+		msg.ID = int64(r.ID)
+		if !r.CreatedAt.IsZero() {
+			msg.At = r.CreatedAt.Time
 		}
 	}
 	return msg, nil

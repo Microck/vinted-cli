@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -240,6 +241,9 @@ type itemsView struct {
 	Page       int           `json:"page,omitempty"`
 	TotalPages int           `json:"total_pages,omitempty"`
 	Total      int           `json:"total,omitempty"`
+	// Unparsed holds the page parts vinted sent in a shape the cli does not
+	// know; with several pages fetched, keys start with "pages.<n>.".
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }
 
 func (v itemsView) Pretty(w io.Writer, color bool) {
@@ -295,6 +299,15 @@ Examples:
 					return err
 				}
 				view.Items = append(view.Items, sp.Items...)
+				for k, raw := range sp.Unparsed {
+					if pages > 1 {
+						k = "pages." + strconv.Itoa(p.Page) + "." + k
+					}
+					if view.Unparsed == nil {
+						view.Unparsed = map[string]json.RawMessage{}
+					}
+					view.Unparsed[k] = raw
+				}
 				view.Page, view.TotalPages, view.Total = sp.Page, sp.TotalPages, sp.Total
 				if len(sp.Items) == 0 || sp.Page >= sp.TotalPages || (limit > 0 && len(view.Items) >= limit) {
 					break
@@ -319,6 +332,11 @@ type filtersView []vinted.Filter
 func (v filtersView) Pretty(w io.Writer, color bool) {
 	rows := make([][]string, 0, len(v))
 	for _, f := range v {
+		// A filter vinted sent in an unknown shape has only its raw JSON,
+		// which the json output carries.
+		if f.Code == "" {
+			continue
+		}
 		pick := "one"
 		if f.Multi {
 			pick = "many"

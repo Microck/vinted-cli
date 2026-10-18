@@ -133,8 +133,10 @@ func normalizeSite(d string) string {
 // NormalizeSite is normalizeSite for the CLI's --domain flag.
 func NormalizeSite(d string) string { return normalizeSite(d) }
 
+// claims are the JWT claims read here. exp is a NumericDate, which RFC 7519
+// allows to be non-integer, so it is read as flexInt.
 type claims struct {
-	Exp int64 `json:"exp"`
+	Exp flexInt `json:"exp"`
 }
 
 // jwtClaims reads an unverified JWT. Verification is not needed: the claims
@@ -154,7 +156,7 @@ func jwtClaims(tok string) claims {
 }
 
 func jwtExpiry(tok string) time.Time {
-	if exp := jwtClaims(tok).Exp; exp != 0 {
+	if exp := int64(jwtClaims(tok).Exp); exp != 0 {
 		return time.Unix(exp, 0)
 	}
 	return time.Time{}

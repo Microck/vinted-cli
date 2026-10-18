@@ -1,6 +1,7 @@
 package vinted
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -10,6 +11,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -299,6 +302,50 @@ func TestItemSold(t *testing.T) {
 	}
 }
 
+// Issue #2: user_info_header carries its badges as plain strings. Badges in
+// any shape decode, the rest of the item still reads, and what the cli cannot
+// name stays in Unparsed together with blocks it has no reader for.
+func TestItemToleratesOddPluginShapes(t *testing.T) {
+	c := New()
+	it, err := c.parseItemPage(fixture(t, "item_badges.html"), 1000000001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.Title != "Nike Air Max 90" || it.Description == "" || it.Size != "42" || it.Seller == nil || it.Seller.Login != "sample_seller" || it.Seller.Reviews != 4 {
+		t.Fatalf("item = %+v", it)
+	}
+	if !slices.Equal(it.Seller.Badges, []string{"ACTIVE_LISTER", "Fast shipper", "Pro"}) {
+		t.Fatalf("badges = %v", it.Seller.Badges)
+	}
+	want := map[string]string{
+		"plugins.user_info_header.badges.1":   `{"odd":true}`,
+		"plugins.seller_badges_info.badges.2": `7`,
+		"plugins.new_block":                   `{"note":"new block"}`,
+	}
+	if len(it.Unparsed) != len(want) {
+		t.Fatalf("unparsed = %s", it.Unparsed)
+	}
+	for k, v := range want {
+		if string(it.Unparsed[k]) != v {
+			t.Errorf("unparsed[%s] = %s, want %s", k, it.Unparsed[k], v)
+		}
+	}
+}
+
+// A plugin whose data has a shape its reader does not know keeps that data
+// raw; the item and the other plugins still read.
+func TestItemKeepsAnUnreadablePluginRaw(t *testing.T) {
+	c := New()
+	page := bytes.Replace(fixture(t, "item.html"), []byte(`{\"description\":\"Worn twice.\\nOriginal box included.\",`), []byte(`{\"description\":{\"text\":\"Worn twice.\"},`), 1)
+	it, err := c.parseItemPage(page, 1000000001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.Description != "" || it.Size != "42" || !strings.Contains(string(it.Unparsed["plugins.description"]), `"text":"Worn twice."`) {
+		t.Fatalf("item = %+v unparsed = %s", it, it.Unparsed)
+	}
+}
+
 func TestItemNotFound(t *testing.T) {
 	_, c := newFake(t)
 	_, err := c.Item(context.Background(), 42)
@@ -465,7 +512,7 @@ func TestUsersAndCatalogs(t *testing.T) {
 		t.Fatalf("cats=%+v err=%v", cats, err)
 	}
 	brands, err := c.Brands(ctx, "nik")
-	if err != nil || len(brands) != 2 || brands[0] != (Brand{ID: 53, Title: "Nike", Slug: "nike", Items: 62698363}) {
+	if err != nil || len(brands) != 2 || !reflect.DeepEqual(brands[0], Brand{ID: 53, Title: "Nike", Slug: "nike", Items: 62698363}) {
 		t.Fatalf("brands=%+v err=%v", brands, err)
 	}
 }
@@ -584,7 +631,7 @@ func TestOfferMessagesAreLabelled(t *testing.T) {
 		t.Fatalf("offer request = %+v", got)
 	}
 	// Without a title the amount comes from the price.
-	m.EntityType, m.Entity.Title, m.Entity.Status = "offer_message", "", json.RawMessage("30")
+	m.EntityType, m.Entity.V.Title, m.Entity.V.Status = "offer_message", "", json.RawMessage("30")
 	if got, ok = normalizeMessage(m, 3000000001, 2000000001); !ok || got.Text != "counter offer: 60.00 USD (rejected)" {
 		t.Fatalf("counter offer = %+v", got)
 	}

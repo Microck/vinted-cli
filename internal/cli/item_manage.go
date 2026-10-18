@@ -384,6 +384,10 @@ func (a *App) resolveForm(ctx context.Context, catalogID int, f itemFormFlags, c
 		byCode := map[string]vinted.UploadAttribute{}
 		codes := make([]string, 0, len(defs))
 		for _, d := range defs {
+			// An attribute vinted sent in an unknown shape has no code to match.
+			if d.Code == "" {
+				continue
+			}
 			byCode[d.Code] = d
 			codes = append(codes, d.Code)
 		}
@@ -542,6 +546,11 @@ func (a *App) uploadCategory(ctx context.Context, ref string) (int, error) {
 	var walk func(cs []vinted.Category, prefix string)
 	walk = func(cs []vinted.Category, prefix string) {
 		for _, c := range cs {
+			if c.ID == 0 {
+				// An entry Vinted sent in a shape the client cannot read
+				// (its raw JSON is in Unparsed) names no category.
+				continue
+			}
 			p := c.Title
 			if prefix != "" {
 				p = prefix + " > " + c.Title
