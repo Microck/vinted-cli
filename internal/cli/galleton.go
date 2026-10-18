@@ -207,11 +207,12 @@ func (a *App) engineSetup() (galleton.Setup, error) {
 	if proxy == "" {
 		// Without a configured proxy the guest requests follow HTTPS_PROXY
 		// and friends (Go's default transport); the engine ignores its
-		// environment, so hand it the same proxy explicitly.
-		if u, err := url.Parse(a.Client.Base); err == nil {
-			if p, err := http.ProxyFromEnvironment(&http.Request{URL: u}); err == nil && p != nil {
-				proxy = p.String()
-			}
+		// environment and has one route per site, so hand it the proxy the
+		// environment picks for every origin of the site, and refuse when
+		// NO_PROXY splits them.
+		var err error
+		if proxy, err = envProxy(vinted.Origins(a.Client.Base)); err != nil {
+			return galleton.Setup{}, err
 		}
 	}
 	env := ""
@@ -267,6 +268,31 @@ func (a *App) forgetManagedProfile(ctx context.Context, profile string) error {
 	return nil
 }
 
+// envProxy is the proxy the standard environment variables pick for origins,
+// empty for a direct connection. Every origin must get the same answer.
+func envProxy(origins []string) (string, error) {
+	choice := ""
+	for i, o := range origins {
+		u, err := url.Parse(o)
+		if err != nil {
+			return "", err
+		}
+		p, err := http.ProxyFromEnvironment(&http.Request{URL: u})
+		if err != nil {
+			return "", output.Usagef("HTTPS_PROXY/HTTP_PROXY: %v", err)
+		}
+		got := ""
+		if p != nil {
+			got = p.String()
+		}
+		if i > 0 && got != choice {
+			return "", output.Usagef("NO_PROXY sends %s and %s different ways, but the session engine has one route per site. Set VINTED_PROXY, or make NO_PROXY cover both or neither", origins[0], o)
+		}
+		choice = got
+	}
+	return choice, nil
+}
+
 // managedLogin imports an export into the daemon under a new session ID,
 // validates it by reading the account through the daemon, and only then
 // points the profile at it and deletes the session it replaces. A login that
@@ -292,8 +318,12 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 		exp := export.AccessExpires.UTC()
 		in.AccessExpiresAt = &exp
 	}
-	// The import goes to the local daemon, not to Vinted; the gate guards the
-	// account read below and the renewal the daemon starts right away.
+	// The daemon renews an imported session right away. That renewal is a
+	// request to Vinted like any other, so it waits for the gate (and a
+	// cooldown refuses the login) before the import that triggers it.
+	if err := a.Gate.Wait(ctx); err != nil {
+		return err
+	}
 	if _, err := c.Connect(ctx, id, in); err != nil {
 		return managedError(err)
 	}
