@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/Microck/vinted-cli/internal/filelock"
@@ -18,7 +19,7 @@ func CloneCredentials(in Credentials) Credentials {
 // sameSession compares persisted timestamps by instant, not by time-zone
 // pointers or monotonic clock data that may differ after a TOML round trip.
 func sameSession(a, b Session) bool {
-	return a.GalletonID == b.GalletonID && a.UserID == b.UserID && a.Login == b.Login &&
+	return a.GalletonID == b.GalletonID && slices.Equal(a.Replaced, b.Replaced) && a.UserID == b.UserID && a.Login == b.Login &&
 		a.Legacy == b.Legacy && a.UpdatedAt.Equal(b.UpdatedAt)
 }
 

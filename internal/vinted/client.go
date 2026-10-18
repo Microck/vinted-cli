@@ -174,6 +174,12 @@ func (c *Client) do(ctx context.Context, r request, out any) ([]byte, error) {
 	switch {
 	case resp.status == http.StatusUnauthorized && !r.noToken:
 		if c.Account != nil {
+			// The renewal is a request to Vinted of its own: gate it.
+			if c.Gate != nil {
+				if err := c.Gate.Wait(ctx); err != nil {
+					return nil, err
+				}
+			}
 			err = c.Account.Renew(ctx)
 		} else {
 			err = g.bootstrap(ctx)

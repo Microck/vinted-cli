@@ -125,10 +125,13 @@ func Save(path string, cfg Config) error {
 // only party that ever holds them. GalletonID names the profile's session
 // there; the rest is non-secret metadata recorded at login.
 type Session struct {
-	GalletonID string    `toml:"galleton_id" json:"session_id"`
-	UserID     int64     `toml:"user_id" json:"user_id"`
-	Login      string    `toml:"login" json:"login"`
-	UpdatedAt  time.Time `toml:"updated_at" json:"updated_at"`
+	GalletonID string `toml:"galleton_id" json:"session_id"`
+	// Replaced are engine sessions an earlier login replaced but could not
+	// delete; the next command that reaches the engine deletes them.
+	Replaced  []string  `toml:"replaced_galleton_ids,omitempty" json:"-"`
+	UserID    int64     `toml:"user_id" json:"user_id"`
+	Login     string    `toml:"login" json:"login"`
+	UpdatedAt time.Time `toml:"updated_at" json:"updated_at"`
 	// Legacy marks a profile still holding the cookie jar an older
 	// vinted-cli kept in this file. It is never used: the profile needs
 	// `vinted auth login`, and the next write of the file drops the cookies.

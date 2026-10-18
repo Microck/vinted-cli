@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,9 @@ func (m *managedAccount) client(ctx context.Context) (*galleton.Client, error) {
 		return nil, &vinted.Error{Kind: vinted.KindAuth, Msg: fmt.Sprintf("the profile's session belongs to another Vinted site (%s, not %s). Run `vinted auth login` for this site", meta.Provider, m.provider)}
 	}
 	m.checked = true
+	if s := m.app.Creds.Profiles[m.app.Profile]; len(s.Replaced) > 0 {
+		m.app.dropReplaced(ctx, c, s.Replaced)
+	}
 	return c, nil
 }
 
@@ -345,10 +349,33 @@ func (a *App) forgetManagedProfile(ctx context.Context, profile string) error {
 	if err != nil {
 		return managedError(err)
 	}
-	if err := c.Forget(ctx, s.GalletonID); err != nil {
-		return managedError(err)
+	for _, id := range append(append([]string{}, s.Replaced...), s.GalletonID) {
+		if err := c.Forget(ctx, id); err != nil {
+			return managedError(err)
+		}
 	}
 	return nil
+}
+
+// dropReplaced deletes engine sessions a login replaced, and records in
+// credentials.toml the ones that still could not be deleted.
+func (a *App) dropReplaced(ctx context.Context, c *galleton.Client, ids []string) {
+	var left []string
+	for _, id := range ids {
+		if err := c.Forget(ctx, id); err != nil {
+			fmt.Fprintf(a.Stderr, "vinted: could not remove the replaced session %s from the engine yet (it is retried later): %v\n", id, managedError(err))
+			left = append(left, id)
+		}
+	}
+	s, ok := a.Creds.Profiles[a.Profile]
+	if !ok || slices.Equal(s.Replaced, left) {
+		return
+	}
+	s.Replaced = left
+	a.Creds.Profiles[a.Profile] = s
+	if err := a.saveCreds(); err != nil {
+		fmt.Fprintf(a.Stderr, "vinted: could not record the sessions left to remove: %v\n", err)
+	}
 }
 
 // envProxy is the proxy the standard environment variables pick for origins,
@@ -399,6 +426,7 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 		return err
 	}
 	previous := a.Creds.Profiles[a.Profile].GalletonID
+	pending := append([]string{}, a.Creds.Profiles[a.Profile].Replaced...)
 	c, err := a.galletonClient(ctx)
 	if err != nil {
 		return managedError(err)
@@ -470,9 +498,13 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 		forget(id, "new")
 		return fmt.Errorf("credentials.toml could not be saved, so the profile keeps its previous session: %w", err)
 	}
+	// Delete the replaced session (and any left from earlier logins). One
+	// that cannot be deleted now stays recorded and is retried later, so no
+	// unreferenced credential is left renewing in the vault.
 	if previous != "" && previous != id {
-		forget(previous, "replaced")
+		pending = append(pending, previous)
 	}
+	a.dropReplaced(ctx, c, pending)
 	return a.Printer.Print(a.currentStatus())
 }
 
