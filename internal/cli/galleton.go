@@ -69,7 +69,7 @@ func (m *managedAccount) Send(ctx context.Context, method, rawURL string, header
 	}
 	resp, err := c.Request(ctx, m.id, method, rawURL, flat, body)
 	if err != nil {
-		return 0, nil, nil, managedError(err)
+		return 0, nil, nil, m.engineError(ctx, err)
 	}
 	return resp.Status, resp.Headers, resp.Body, nil
 }
@@ -80,9 +80,38 @@ func (m *managedAccount) Renew(ctx context.Context) error {
 		return err
 	}
 	if _, err := c.Refresh(ctx, m.id); err != nil {
-		return managedError(err)
+		return m.engineError(ctx, err)
 	}
 	return nil
+}
+
+// engineError is managedError for request and renewal failures. When the
+// bot protection blocked the engine's own renewal, the CLI starts the same
+// shared cooldown (and engine pause) as for a block it saw itself, so no
+// process keeps knocking while the site refuses.
+func (m *managedAccount) engineError(ctx context.Context, err error) error {
+	var apiErr *galleton.Error
+	if !errors.As(err, &apiErr) || apiErr.Code != "upstream_blocked" {
+		return managedError(err)
+	}
+	what := "vinted's bot protection (Datadome/Cloudflare) blocked the session engine's token renewal"
+	e := &vinted.Error{Kind: vinted.KindBlocked, Status: apiErr.Status, Endpoint: "POST " + vinted.RefreshPath}
+	retry := time.Duration(0)
+	if !apiErr.RetryAt.IsZero() {
+		retry = time.Until(apiErr.RetryAt)
+	}
+	wait, berr := m.app.Gate.Block(what, retry)
+	e.Msg = what + ". Stop running vinted commands: the cli will not contact vinted for the next " + vinted.FormatWait(wait) + ". Open vinted in your normal browser; if it shows a captcha or a block page, solve it there"
+	if berr != nil {
+		e.Msg += fmt.Sprintf(" (the cooldown could not be saved: %v)", berr)
+	}
+	if wait > 0 {
+		if perr := m.Pause(ctx, wait); perr != nil {
+			e.Msg += fmt.Sprintf(" (the session engine could not be paused: %v)", perr)
+		}
+	}
+	e.Suggest = vinted.BlockAdvice(m.app.Client.Base, wait)
+	return e
 }
 
 func (m *managedAccount) Pause(ctx context.Context, d time.Duration) error {
@@ -331,15 +360,18 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 	if err := a.Gate.Wait(ctx); err != nil {
 		return err
 	}
-	if _, err := c.Connect(ctx, id, in); err != nil {
-		return managedError(err)
-	}
 	forget := func(id, what string) {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 		defer cancel()
 		if err := c.Forget(cleanup, id); err != nil {
 			fmt.Fprintf(a.Stderr, "vinted: could not remove the %s session %s from the engine: %v\n", what, id, managedError(err))
 		}
+	}
+	if _, err := c.Connect(ctx, id, in); err != nil {
+		// A lost answer or a cancel may hide a completed import: remove the
+		// new session either way (forgetting a missing one is a no-op).
+		forget(id, "unconfirmed")
+		return managedError(err)
 	}
 	a.Account = &managedAccount{app: a, id: id, provider: provider, checked: true}
 	a.Client.Account = a.Account

@@ -133,3 +133,21 @@ func TestReloginReplacesTheSessionOnlyWhenTheNewOneWorks(t *testing.T) {
 	}
 	h.must("", "me", "show")
 }
+
+// A block on the engine's own renewal starts the shared cooldown and the
+// engine pause, the same as a block the CLI saw on one of its requests.
+func TestBlockedEngineRenewalStartsTheCooldown(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.fake.setBlock("/web/api/auth/refresh", datadomeBlock(t))
+	r := h.run("", "auth", "refresh")
+	if r.code != 5 || !strings.Contains(r.stderr, "renewal") {
+		t.Fatalf("blocked renewal: exit %d\n%s", r.code, r.stderr)
+	}
+	if cd := decode[map[string]any](t, h.must("", "cooldown").stdout); cd["blocked"] != true {
+		t.Fatalf("no cooldown after a blocked renewal: %v", cd)
+	}
+	if until := h.pausedUntil(); until == nil {
+		t.Fatal("the engine was not paused after its renewal was blocked")
+	}
+}
