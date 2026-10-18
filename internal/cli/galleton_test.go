@@ -242,6 +242,44 @@ func TestAuthServiceRunReportsAnEngineRenewalBlock(t *testing.T) {
 	}
 }
 
+// `auth service run` started during a cooldown waits for it to end instead
+// of exiting, then starts the engine.
+func TestAuthServiceRunWaitsOutACooldown(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.fake.setBlock("/api/v2/users/current", datadomeBlock(t))
+	if r := h.run("", "me", "show"); r.code != 5 {
+		t.Fatalf("blocked me show: exit %d\n%s", r.code, r.stderr)
+	}
+	h.fake.setBlock("", nil)
+	h.must("", "auth", "service", "stop")
+	stop := make(chan struct{})
+	t.Cleanup(cli.UseServiceLoop(50*time.Millisecond, stop))
+	done := make(chan result, 1)
+	go func() { done <- h.run("", "auth", "service", "run") }()
+	time.Sleep(500 * time.Millisecond)
+	select {
+	case r := <-done:
+		t.Fatalf("auth service run exited during the cooldown: exit %d\n%s", r.code, r.stderr)
+	default:
+	}
+	if h.engineRunning() {
+		t.Fatal("auth service run started the engine during a cooldown")
+	}
+	h.must("", "cooldown", "clear", "--yes")
+	deadline := time.Now().Add(60 * time.Second)
+	for !h.engineRunning() {
+		if time.Now().After(deadline) {
+			t.Fatal("auth service run did not start the engine after the cooldown")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	close(stop)
+	if r := <-done; r.code != 0 {
+		t.Fatalf("auth service run: exit %d\n%s", r.code, r.stderr)
+	}
+}
+
 // A block seen by a logged-out profile still pauses the running engine,
 // which renews another profile's session for the same site.
 func TestGuestBlockPausesARunningEngine(t *testing.T) {

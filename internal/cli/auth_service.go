@@ -46,10 +46,27 @@ paths and VINTED_PROXY of the shell that enabled it, never a credential.`,
 			state = dir
 		}
 		// Attaches, and holds the renewals for any cooldown recorded while no
-		// engine ran; never starts the engine during one.
-		c, err := a.openEngine(cmd.Context(), state)
-		if err != nil {
-			return err
+		// engine ran. During a cooldown the engine is never started, so wait
+		// it out here: a Windows logon task would not run again until the
+		// next logon.
+		var c *galleton.Client
+		for {
+			var err error
+			c, err = a.openEngine(cmd.Context(), state)
+			var held *engineHeldError
+			if err == nil {
+				break
+			}
+			if !errors.As(err, &held) {
+				return err
+			}
+			select {
+			case <-cmd.Context().Done():
+				return nil
+			case <-serviceStop:
+				return nil
+			case <-time.After(serviceTick):
+			}
 		}
 		defer c.Close()
 		reported := map[string]time.Time{}
