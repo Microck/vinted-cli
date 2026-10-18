@@ -5,7 +5,8 @@ project_name: vinted
 before:
   hooks:
     - go mod tidy
-    - go run ./cmd/bundle-galleton -all
+    # Older source tags (manual release retries) have no session engine.
+    - sh -c 'test ! -d cmd/bundle-galleton || go run ./cmd/bundle-galleton -all'
 
 builds:
   - id: vinted

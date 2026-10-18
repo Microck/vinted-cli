@@ -124,11 +124,7 @@ func (a *App) authServiceUnit() (*serviceUnit, string, error) {
 // a credential: enable refuses a VINTED_PROXY carrying one.
 func authServiceDefinition(platform, name, exe, dir string, env [][2]string) string {
 	if platform == "systemd" {
-		var envLines strings.Builder
-		for _, kv := range env {
-			envLines.WriteString("Environment=" + systemdQuote(kv[0]+"="+kv[1]) + "\n")
-		}
-		return "[Unit]\nDescription=Vinted session renewal\n\n[Service]\nType=simple\n" + envLines.String() + "ExecStart=" + systemdQuote(exe) + " auth service run --dir " + systemdQuote(dir) + " --no-input\nRestart=on-failure\nRestartSec=10\n\n[Install]\nWantedBy=default.target\n"
+		return "[Unit]\nDescription=Vinted session renewal\n\n[Service]\nType=simple\n" + systemdEnv(env) + "ExecStart=" + systemdQuote(exe) + " auth service run --dir " + systemdQuote(dir) + " --no-input\nRestart=on-failure\nRestartSec=10\n\n[Install]\nWantedBy=default.target\n"
 	}
 	var envDict strings.Builder
 	if len(env) > 0 {

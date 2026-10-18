@@ -852,6 +852,29 @@ var (
 	serviceEnvURLKeys = append([]string{"VINTED_BASE_URL", "VINTED_GALLETON_DIR", "VINTED_GALLETON_URL", "VINTED_GALLETON_TOKEN_FILE", "SSL_CERT_FILE", "SSL_CERT_DIR"}, serviceEnvProxyKeys...)
 )
 
+// systemdEnv renders the frozen environment as Environment= lines, and
+// unsets every carried variable the enabling shell did not have: the user
+// manager's own environment must not slip in a proxy or path the shell
+// left out.
+func systemdEnv(env [][2]string) string {
+	var b strings.Builder
+	set := map[string]bool{}
+	for _, kv := range env {
+		set[kv[0]] = true
+		b.WriteString("Environment=" + systemdQuote(kv[0]+"="+kv[1]) + "\n")
+	}
+	var unset []string
+	for _, k := range append(append(append([]string{}, serviceEnvXDGKeys...), "VINTED_CONFIG"), serviceEnvURLKeys...) {
+		if !set[k] {
+			unset = append(unset, k)
+		}
+	}
+	if len(unset) > 0 {
+		b.WriteString("UnsetEnvironment=" + strings.Join(unset, " ") + "\n")
+	}
+	return b.String()
+}
+
 // checkServiceProxies refuses to freeze a proxy carrying credentials into a
 // world-readable unit file.
 func checkServiceProxies() error {
@@ -928,13 +951,10 @@ func serviceEnv() [][2]string {
 // The append: paths take the rest of the line and need no quoting, but every
 // value still has its % doubled against specifier expansion.
 func systemdUnits(profile, exe string, args []string, logFile string, iv time.Duration, env [][2]string) (service, timer string) {
-	var envLines strings.Builder
-	for _, kv := range env {
-		envLines.WriteString("Environment=" + systemdQuote(kv[0]+"="+kv[1]) + "\n")
-	}
+	envLines := systemdEnv(env)
 	log := systemdLiteral(logFile)
 	service = fmt.Sprintf("[Unit]\nDescription=vinted-cli watch checks (%s)\n\n[Service]\nType=oneshot\n%sExecStart=%s %s\nStandardOutput=append:%s\nStandardError=append:%s\n",
-		profile, envLines.String(), systemdQuote(exe), systemdLiteral(strings.Join(args, " ")), log, log)
+		profile, envLines, systemdQuote(exe), systemdLiteral(strings.Join(args, " ")), log, log)
 	timer = fmt.Sprintf("[Unit]\nDescription=vinted-cli watch timer (%s)\n\n[Timer]\nOnBootSec=2m\nOnUnitActiveSec=%s\n\n[Install]\nWantedBy=timers.target\n",
 		profile, formatSystemd(iv))
 	return service, timer
