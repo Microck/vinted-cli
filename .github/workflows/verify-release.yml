@@ -1,0 +1,104 @@
+name: verify release installs
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/verify-release.yml
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published release tag expected from the current tap and bucket
+        required: true
+        default: v0.1.0
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  homebrew:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || 'v0.1.0' }}
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+    steps:
+      - name: Install published Homebrew cask without Go
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          expected="vinted ${RELEASE_TAG#v}"
+          brew_bin="$(command -v brew)"
+          IFS=: read -r -a paths <<< "$PATH"
+          install_path=""
+          for path in "${paths[@]}"; do
+            if [[ -n "$path" && ! -x "$path/go" ]]; then
+              install_path="${install_path:+$install_path:}$path"
+            fi
+          done
+          export PATH="$install_path"
+          if command -v go; then
+            echo 'Go must be unavailable in the installation PATH' >&2
+            exit 1
+          fi
+          echo 'Go unavailable in installation PATH'
+          uname -sm
+          sw_vers
+          "$brew_bin" install Microck/tap/vinted
+          "$brew_bin" list --cask --versions vinted
+          "$brew_bin" info --cask --json=v2 Microck/tap/vinted
+          installed="$("$brew_bin" --prefix)/bin/vinted"
+          file "$installed"
+          actual="$("$installed" --version)"
+          printf '%s\n' "$actual"
+          [[ "$actual" == "$expected" ]]
+
+  scoop:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag || 'v0.1.0' }}
+    steps:
+      - name: Install published Scoop package without Go
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$') {
+            throw 'Expected a published release tag beginning with v'
+          }
+          $expected = 'vinted ' + $env:RELEASE_TAG.Substring(1)
+          $env:PATH = (($env:PATH -split ';') | Where-Object {
+            $_ -and -not (Test-Path (Join-Path $_ 'go.exe'))
+          }) -join ';'
+          if (Get-Command go -ErrorAction SilentlyContinue) {
+            throw 'Go must be unavailable in the installation PATH'
+          }
+          Write-Output 'Go unavailable in installation PATH'
+          [System.Runtime.InteropServices.RuntimeInformation]::OSDescription
+          [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+          if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {
+            $installer = Join-Path $env:RUNNER_TEMP 'install-scoop.ps1'
+            Invoke-WebRequest https://get.scoop.sh -OutFile $installer
+            $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+            $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+            if ($principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+              & $installer -RunAsAdmin
+            } else {
+              & $installer
+            }
+          }
+          if (Get-Command go -ErrorAction SilentlyContinue) {
+            throw 'Scoop bootstrap restored Go to the installation PATH'
+          }
+          scoop bucket add microck https://github.com/Microck/scoop-bucket
+          scoop install microck/vinted
+          scoop info microck/vinted
+          Get-Command vinted | Format-List Source
+          $actual = vinted --version
+          Write-Output $actual
+          if ($actual -cne $expected) {
+            throw "Expected '$expected', got '$actual'"
+          }

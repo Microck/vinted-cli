@@ -1,0 +1,23 @@
+bin/
+dist/
+*.test
+.tmp-*
+
+# docs-site build output and deps
+docs-site/node_modules/
+docs-site/.next/
+docs-site/.source/
+docs-site/out/
+docs-site/public/install.sh
+docs-site/*.tsbuildinfo
+
+# Scratch worktrees used by parallel agents
+.claude/worktrees/
+
+
+# local scratch and editor files
+.env
+.env.*
+/*.cookies
+/cookies*.json
+.DS_Store

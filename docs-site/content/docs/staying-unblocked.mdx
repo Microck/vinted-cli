@@ -1,0 +1,116 @@
+---
+title: Staying unblocked
+description: How the CLI keeps Vinted's bot protection from blocking your session, and what to do when it does.
+---
+
+Vinted sits behind Datadome and Cloudflare. They watch for traffic that looks automated, and
+when they decide yours is, they block the session ("Se ha bloqueado tu sesión", unusual
+activity) and sometimes the whole IP for hours. A blocked session can take your browser login
+down with it.
+
+The CLI is built to stay well under that line. None of the limits below has a flag to turn it
+off.
+
+## What the CLI does
+
+### Pacing shared by every process
+
+At most one request every 2 seconds goes to a Vinted site, plus up to 1 second of random
+jitter on every gap. Every `vinted` process and profile on the machine queues behind the same
+slot, through a small state file written under a file lock:
+
+```
+$XDG_STATE_HOME/vinted-cli/throttle.json
+```
+
+A watch timer, an MCP server and a command you type therefore never burst together. Raise the
+gap if you like; it cannot go below 1 second:
+
+```bash
+vinted config set request_interval 5s
+```
+
+### A block stops everything
+
+A captcha page, a Datadome or Cloudflare block page, an HTTP 429, or a 403 that is not one of
+Vinted's own error messages ends the command with exit `5`. It is never retried: every retry
+extends the block.
+
+The block starts a **6 hour cooldown** for that site (longer when Vinted's `Retry-After`
+asks for it). Until it ends, every command, in every process and profile, fails at once with
+exit `5` and the time left, without sending anything.
+
+```bash
+vinted cooldown              # site, blocked until, time left, cause
+vinted doctor                # shows it too, and skips its network checks
+vinted auth status           # has a "cooldown" field while it lasts
+vinted cooldown clear --yes  # lift it early
+```
+
+<Callout type="warn" title="Clear it only when Vinted works again">
+  `cooldown clear` is the only way to end a cooldown early. Use it once Vinted works normally
+  in your browser, not to get a script going again.
+</Callout>
+
+### Small requests
+
+| Limit | Value |
+| --- | --- |
+| `search --pages` | at most 5 |
+| Search watch, pages per check | at most 5 |
+| Seller watch, wardrobe pages per check | at most 10 (960 listings; removals past that are not reported) |
+| Requests per command (one watch tick, one `chat open` poll, one MCP tool call) | at most 60 |
+
+Going over a cap is exit `2`, before anything is sent.
+
+### Slow schedules
+
+- `watch add`, `watch run` and `watch service install` refuse intervals under 15 minutes.
+  The default is 15 minutes.
+- Scheduled checks start after a random delay of up to a tenth of the interval, so they do not
+  hit Vinted at fixed times.
+- Watches are checked one after another, never in parallel.
+- `chat open` polls every 30 seconds (at least 10).
+
+### No needless requests
+
+- The CSRF token and the guest session are cached in `throttle.json` (mode 0600), so a command
+  does not reload the home page just to get them. A block forgets both.
+- One keep-alive connection serves a whole command.
+- Every request carries the same Chrome-on-Linux headers: client hints that match the user
+  agent, the `Sec-Fetch-*` headers a browser sends, and the site's language in
+  `Accept-Language`.
+
+## What you should do
+
+- **Keep intervals generous.** A few watches every 15 to 30 minutes is fine. Dozens every 15
+  minutes is not.
+- **Run from the network you browse from.** Datacenter, VPS and commercial VPN IP ranges get
+  flagged far faster than a home connection.
+- **When blocked: stop and wait.** Let the cooldown run out, open Vinted in your normal
+  browser and solve any captcha there. If the session stays blocked, export fresh cookies and
+  run `vinted auth login` again.
+
+## Using a proxy
+
+Set `proxy` in config.toml, or `VINTED_PROXY` in the environment (it wins):
+
+```bash
+vinted config set proxy socks5h://127.0.0.1:1080
+VINTED_PROXY=http://proxy.lan:3128 vinted search "levis 501"
+```
+
+`http`, `https`, `socks5` and `socks5h` work; with `socks5h` the proxy resolves Vinted's host
+names, so no DNS query leaves your machine directly. All Vinted traffic, the token refresh
+included, goes through the proxy. If the proxy is unreachable the request fails with exit `6`;
+the CLI never falls back to a direct connection. An invalid proxy URL fails every request with
+exit `2`. `vinted doctor` shows the proxy in use, without credentials.
+
+config.toml is world-readable, so `config set` refuses a proxy URL with a password. Put one
+with credentials in `VINTED_PROXY`; `watch service install` refuses it too, since unit files
+are world-readable as well.
+
+<Callout type="info" title="Still not invisible">
+  None of this makes automated use undetectable. Vinted can still block the session; the CLI
+  only makes it much less likely, and stops making it worse when it happens.
+</Callout>

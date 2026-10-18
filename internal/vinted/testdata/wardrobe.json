@@ -1,0 +1,162 @@
+{
+  "items": [
+    {
+      "id": 1000000001,
+      "title": "Nike Air Max 90",
+      "user_id": 2000000001,
+      "price": {
+        "amount": "45.0",
+        "currency_code": "EUR"
+      },
+      "currency": "EUR",
+      "path": "/items/1000000001-sample",
+      "is_draft": false,
+      "is_closed": false,
+      "is_reserved": false,
+      "is_hidden": false,
+      "favourite_count": 3,
+      "is_favourite": false,
+      "service_fee": {
+        "amount": "0.9",
+        "currency_code": "EUR"
+      },
+      "total_item_price": {
+        "amount": "45.9",
+        "currency_code": "EUR"
+      },
+      "photos": [
+        {
+          "id": 1,
+          "is_main": true,
+          "url": "https://images1.vinted.net/t/sample/f800/1000000001-m.webp",
+          "full_size_url": "https://images1.vinted.net/t/sample/f800/1000000001-full.webp",
+          "high_resolution": {
+            "id": "x",
+            "timestamp": 1700000000,
+            "orientation": null
+          }
+        }
+      ],
+      "brand": "Nike",
+      "size": "42",
+      "status": "Very good",
+      "url": "https://www.vinted.fr/items/1000000001-sample",
+      "promoted": false,
+      "view_count": 0,
+      "user": {
+        "id": 2000000001,
+        "login": "sample_seller",
+        "photo": null,
+        "business": false
+      }
+    },
+    {
+      "id": 1000000003,
+      "title": "Running shorts",
+      "user_id": 2000000001,
+      "price": {
+        "amount": "8.0",
+        "currency_code": "EUR"
+      },
+      "currency": "EUR",
+      "path": "/items/1000000003-sample",
+      "is_draft": false,
+      "is_closed": false,
+      "is_reserved": true,
+      "is_hidden": false,
+      "favourite_count": 3,
+      "is_favourite": false,
+      "service_fee": {
+        "amount": "0.9",
+        "currency_code": "EUR"
+      },
+      "total_item_price": {
+        "amount": "8.9",
+        "currency_code": "EUR"
+      },
+      "photos": [
+        {
+          "id": 1,
+          "is_main": true,
+          "url": "https://images1.vinted.net/t/sample/f800/1000000003-m.webp",
+          "full_size_url": "https://images1.vinted.net/t/sample/f800/1000000003-full.webp",
+          "high_resolution": {
+            "id": "x",
+            "timestamp": 1700000000,
+            "orientation": null
+          }
+        }
+      ],
+      "brand": "Nike",
+      "size": "42",
+      "status": "Very good",
+      "url": "https://www.vinted.fr/items/1000000003-sample",
+      "promoted": false,
+      "view_count": 0,
+      "user": {
+        "id": 2000000001,
+        "login": "sample_seller",
+        "photo": null,
+        "business": false
+      }
+    },
+    {
+      "id": 1000000004,
+      "title": "Hoodie",
+      "user_id": 2000000001,
+      "price": {
+        "amount": "12.0",
+        "currency_code": "EUR"
+      },
+      "currency": "EUR",
+      "path": "/items/1000000004-sample",
+      "is_draft": false,
+      "is_closed": true,
+      "is_reserved": false,
+      "is_hidden": false,
+      "favourite_count": 3,
+      "is_favourite": false,
+      "service_fee": {
+        "amount": "0.9",
+        "currency_code": "EUR"
+      },
+      "total_item_price": {
+        "amount": "12.9",
+        "currency_code": "EUR"
+      },
+      "photos": [
+        {
+          "id": 1,
+          "is_main": true,
+          "url": "https://images1.vinted.net/t/sample/f800/1000000004-m.webp",
+          "full_size_url": "https://images1.vinted.net/t/sample/f800/1000000004-full.webp",
+          "high_resolution": {
+            "id": "x",
+            "timestamp": 1700000000,
+            "orientation": null
+          }
+        }
+      ],
+      "brand": "Nike",
+      "size": "42",
+      "status": "Very good",
+      "url": "https://www.vinted.fr/items/1000000004-sample",
+      "promoted": false,
+      "view_count": 0,
+      "user": {
+        "id": 2000000001,
+        "login": "sample_seller",
+        "photo": null,
+        "business": false
+      }
+    }
+  ],
+  "pagination": {
+    "current_page": 1,
+    "total_pages": 1,
+    "total_entries": 3,
+    "per_page": 20,
+    "time": 1700000000
+  },
+  "code": 0
+}

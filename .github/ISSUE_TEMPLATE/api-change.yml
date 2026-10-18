@@ -1,0 +1,41 @@
+name: Vinted API change
+description: The CLI reported "vinted may have changed its api" (exit code 7)
+title: "[api change] "
+labels: [api-change]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The CLI prefilled most of this from the failing request. Add anything else you noticed. Search terms and ids are never included automatically; add them only if you want to.
+  - type: input
+    id: version
+    attributes:
+      label: CLI version
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS / arch
+  - type: input
+    id: command
+    attributes:
+      label: Command (path only, no arguments)
+  - type: input
+    id: endpoint
+    attributes:
+      label: Endpoint
+  - type: input
+    id: status
+    attributes:
+      label: HTTP status
+  - type: textarea
+    id: body_excerpt
+    attributes:
+      label: Response excerpt (redacted by the CLI)
+      render: text
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Output of `vinted doctor`, or the `--debug` log with secrets removed.

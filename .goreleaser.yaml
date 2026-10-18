@@ -1,0 +1,101 @@
+version: 2
+
+project_name: vinted
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: vinted
+    # cmd/vinted rather than the module root so `go install .../cmd/vinted`
+    # names the binary vinted, not vinted-cli.
+    main: ./cmd/vinted
+    binary: vinted
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  filters:
+    exclude:
+      - "^chore"
+      - "^ci"
+      - "^docs"
+
+release:
+  github:
+    owner: Microck
+    name: vinted-cli
+  draft: false
+  prerelease: auto
+
+homebrew_casks:
+  - name: vinted
+    repository:
+      owner: Microck
+      name: homebrew-tap
+      # The Actions GITHUB_TOKEN cannot write to another repo.
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/Microck/vinted-cli
+    description: Terminal CLI for Vinted
+    license: MIT
+    # The binary is not notarized, so Gatekeeper would kill it on first run
+    # unless the quarantine flag Homebrew sets on the download is removed.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/vinted"]
+          end
+
+scoops:
+  - name: vinted
+    repository:
+      owner: Microck
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+    homepage: https://github.com/Microck/vinted-cli
+    description: Terminal CLI for Vinted
+    license: MIT
+
+aurs:
+  - name: vinted-cli-bin
+    homepage: https://github.com/Microck/vinted-cli
+    description: Terminal CLI for Vinted
+    license: MIT
+    maintainers:
+      - Microck <microck at users dot noreply dot github dot com>
+    private_key: "{{ .Env.AUR_SSH_PRIVATE_KEY }}"
+    git_url: ssh://aur@aur.archlinux.org/vinted-cli-bin.git
+    skip_upload: auto
+    provides:
+      - vinted-cli
+    conflicts:
+      - vinted-cli
+    depends:
+      - ca-certificates
+    package: |-
+      install -Dm755 "./vinted" "${pkgdir}/usr/bin/vinted"
+      install -Dm644 "./LICENSE" "${pkgdir}/usr/share/licenses/vinted-cli-bin/LICENSE"
+    commit_author:
+      name: Microck
+      email: microck@users.noreply.github.com

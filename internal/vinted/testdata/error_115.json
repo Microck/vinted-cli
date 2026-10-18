@@ -1,0 +1,6 @@
+{
+  "code": 115,
+  "message": "Member verification required",
+  "message_code": "user_verification_required",
+  "payload": {}
+}

@@ -1,0 +1,33 @@
+---
+title: Command reference
+description: Every command and flag, generated from the binary.
+---
+
+The pages under here are generated from the CLI's own command tree by `cmd/docsgen`, so the
+flags documented are the flags the binary has. CI regenerates them and fails if anything moved,
+which is what stops this reference drifting from the code.
+
+To regenerate after changing a command:
+
+```bash
+make docs
+```
+
+<Callout type="info" title="Do not edit these by hand">
+  Changes to the generated pages are overwritten. Edit the command's `Short`, `Long` and flag
+  usage strings in Go instead; they are the source.
+</Callout>
+
+## Shape of the command set
+
+Commands are noun-verb: the noun is the thing, the verb is what you do to it.
+
+```bash
+vinted search "levis 501"
+vinted item show ITEM
+vinted user items USER
+vinted chat send CONV TEXT
+vinted watch add search "levis 501"
+```
+
+See [Global flags](/docs/reference/global-flags) for flags that apply everywhere.

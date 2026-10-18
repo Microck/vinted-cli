@@ -1,0 +1,52 @@
+---
+title: When Vinted changes its API
+description: Why the CLI fails loudly instead of quietly returning nothing.
+---
+
+Vinted publishes no API. Everything here talks to the endpoints and pages the website uses,
+recorded by watching the site work. Search and item details are not even JSON: they are read
+out of the server-rendered catalog and item pages. Both change without notice.
+
+The choice this CLI makes is to fail loudly. A search that returns zero results because
+a field moved costs you the listing you were waiting for. A search that stops and says so
+costs you a retry.
+
+## What it looks like
+
+When a known endpoint or page answers with a shape the CLI does not understand, it exits `7`
+and prints what it saw, along with a link that opens a prefilled GitHub issue.
+
+```bash
+vinted search "levis 501"
+```
+
+```
+vinted: vinted returned a response the cli does not understand
+  endpoint: GET /catalog
+
+Report this: https://github.com/Microck/vinted-cli/issues/new?title=...
+```
+
+The report carries the endpoint, the status and the decode error. It carries no cookie, no
+token, no search text and no personal data: secrets are redacted from every log line and
+every error the CLI prints.
+
+## Telling failures apart
+
+Exit `7` means the endpoint answered and the answer was wrong-shaped. That is a code problem.
+Report it.
+
+Exit `5` means the bot protection in front of Vinted blocked the request, or you were rate
+limited. That is not an API change. The CLI pauses every request to the site for hours; see
+[Staying unblocked](/docs/staying-unblocked).
+
+Exit `6` is the network. Retry.
+
+## Checking your setup first
+
+```bash
+vinted doctor
+```
+
+`doctor` checks the config parses, the session refreshes and Vinted is reachable. Run it
+before filing anything. Most surprises are an expired session, not a changed API.

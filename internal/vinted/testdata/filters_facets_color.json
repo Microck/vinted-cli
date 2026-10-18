@@ -1,0 +1,325 @@
+{
+ "filter_code": "color",
+ "options": [
+  {
+   "id": "1",
+   "items_count": 46920,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/black.png"
+   },
+   "title": "Black",
+   "type": "default"
+  },
+  {
+   "id": "3",
+   "items_count": 19205,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/grey.png"
+   },
+   "title": "Gray",
+   "type": "default"
+  },
+  {
+   "id": "12",
+   "items_count": 23601,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/white.png"
+   },
+   "title": "White",
+   "type": "default"
+  },
+  {
+   "id": "20",
+   "items_count": 6431,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/cream.png"
+   },
+   "title": "Cream",
+   "type": "default"
+  },
+  {
+   "id": "4",
+   "items_count": 6206,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/body.png"
+   },
+   "title": "Beige",
+   "type": "default"
+  },
+  {
+   "id": "21",
+   "items_count": 278,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/apricot.png"
+   },
+   "title": "Apricot",
+   "type": "default"
+  },
+  {
+   "id": "11",
+   "items_count": 400,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/orange.png"
+   },
+   "title": "Orange",
+   "type": "default"
+  },
+  {
+   "id": "22",
+   "items_count": 542,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/coral.png"
+   },
+   "title": "Coral",
+   "type": "default"
+  },
+  {
+   "id": "7",
+   "items_count": 1216,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/red.png"
+   },
+   "title": "Red",
+   "type": "default"
+  },
+  {
+   "id": "23",
+   "items_count": 1376,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/burgundy.png"
+   },
+   "title": "Burgundy",
+   "type": "default"
+  },
+  {
+   "id": "5",
+   "items_count": 1417,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/pink.png"
+   },
+   "title": "Pink",
+   "type": "default"
+  },
+  {
+   "id": "24",
+   "items_count": 1956,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/rose.png"
+   },
+   "title": "Rose",
+   "type": "default"
+  },
+  {
+   "id": "6",
+   "items_count": 713,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/purple.png"
+   },
+   "title": "Purple",
+   "type": "default"
+  },
+  {
+   "id": "25",
+   "items_count": 473,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/lilac.png"
+   },
+   "title": "Lilac",
+   "type": "default"
+  },
+  {
+   "id": "26",
+   "items_count": 81465,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/light-blue.png"
+   },
+   "title": "Light blue",
+   "type": "default"
+  },
+  {
+   "id": "9",
+   "items_count": 168085,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/blue.png"
+   },
+   "title": "Blue",
+   "type": "default"
+  },
+  {
+   "id": "27",
+   "items_count": 58244,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/navy.png"
+   },
+   "title": "Navy",
+   "type": "default"
+  },
+  {
+   "id": "17",
+   "items_count": 694,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/turquoise.png"
+   },
+   "title": "Turquoise",
+   "type": "default"
+  },
+  {
+   "id": "30",
+   "items_count": 583,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/mint.png"
+   },
+   "title": "Mint",
+   "type": "default"
+  },
+  {
+   "id": "10",
+   "items_count": 1330,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/green.png"
+   },
+   "title": "Green",
+   "type": "default"
+  },
+  {
+   "id": "28",
+   "items_count": 1422,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/dark-green.png"
+   },
+   "title": "Dark green",
+   "type": "default"
+  },
+  {
+   "id": "16",
+   "items_count": 2585,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/khaki.png"
+   },
+   "title": "Khaki",
+   "type": "default"
+  },
+  {
+   "id": "2",
+   "items_count": 5541,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/brown.png"
+   },
+   "title": "Brown",
+   "type": "default"
+  },
+  {
+   "id": "29",
+   "items_count": 186,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/mustard.png"
+   },
+   "title": "Mustard",
+   "type": "default"
+  },
+  {
+   "id": "8",
+   "items_count": 550,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/yellow.png"
+   },
+   "title": "Yellow",
+   "type": "default"
+  },
+  {
+   "id": "13",
+   "items_count": 1276,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/silver.png"
+   },
+   "title": "Silver",
+   "type": "default"
+  },
+  {
+   "id": "14",
+   "items_count": 687,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/gold.png"
+   },
+   "title": "Gold",
+   "type": "default"
+  },
+  {
+   "id": "15",
+   "items_count": 2014,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/various.png"
+   },
+   "title": "Multi",
+   "type": "default"
+  },
+  {
+   "id": "32",
+   "items_count": 149,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/colours/clear.png"
+   },
+   "title": "Clear",
+   "type": "default"
+  }
+ ],
+ "total_count_max": 99
+}

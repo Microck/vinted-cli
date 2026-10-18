@@ -1,0 +1,61 @@
+---
+title: Scheduling checks
+description: Keep watches running after you close the terminal.
+---
+
+A watch only produces events when something runs `watch check`. To have that happen on its own,
+install a scheduler entry. The interval defaults to 15 minutes and cannot be shorter: checking
+Vinted more often gets the session blocked (see [Staying unblocked](/docs/staying-unblocked)).
+
+```bash
+vinted watch service install --interval 15m
+vinted watch service status
+vinted watch service uninstall
+```
+
+<Tabs items={['Linux', 'macOS', 'Windows']} id="platform">
+  <Tab value="Linux">
+    Writes a systemd user service and timer running `vinted watch check --all` for the
+    profile you installed from. Each run starts after a random delay of up to a tenth of the
+    interval.
+
+    Install also runs `loginctl enable-linger`. Without it a user timer stops when you log out
+    and does not come back at boot, which is exactly the failure you would not notice.
+
+    ```bash
+    systemctl --user list-timers | grep vinted
+    ```
+  </Tab>
+  <Tab value="macOS">
+    Writes a launchd agent that runs the same check on the interval.
+
+    <Callout type="warn" title="Not verified end to end">
+      The launchd path has not been exercised on a real Mac. Treat it as untested.
+    </Callout>
+  </Tab>
+  <Tab value="Windows">
+    There is no installer. The command prints the `schtasks` line to run yourself in
+    `cmd.exe`, with the interval rounded up to whole minutes.
+  </Tab>
+</Tabs>
+
+## Status
+
+- `not installed` when the unit files are missing
+- `active`, `inactive` or `failed` on systemd. `systemctl --user` reports `unknown` when it is not
+  available, plus a warning suffix when the timer is not enabled or linger is off
+- `loaded` or `not loaded` on launchd
+
+systemd also reports the last trigger time as `last_run`. `vinted doctor` shows the same
+state, so one command tells you whether scheduling works.
+
+## The log
+
+Scheduled output is appended to:
+
+```
+$XDG_STATE_HOME/vinted-cli/vinted-watch-<profile>.log
+```
+
+`watch check` rotates the log to `.log.1` once it passes 1 MiB. The log stays within two files of
+about that size. `uninstall` removes the units and the log.

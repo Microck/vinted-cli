@@ -1,0 +1,160 @@
+{
+ "filters": [
+  {
+   "code": "size",
+   "display_type": "grid",
+   "id": "7",
+   "is_lazy": true,
+   "is_selection_highlighted": true,
+   "options": [],
+   "position": 1,
+   "selection_type": "multi",
+   "title": "Size",
+   "total_count_max": 99,
+   "translations": {
+    "no_results": {
+     "body": "Try adjusting other filters to see more results",
+     "title": "No items available with this filter"
+    },
+    "selected_section_accessibility": "Selected sizes"
+   }
+  },
+  {
+   "code": "brand",
+   "display_type": "list_search",
+   "id": "8",
+   "is_lazy": true,
+   "is_selection_highlighted": true,
+   "options": [],
+   "position": 2,
+   "search_translations": {
+    "no_results": {
+     "body": "Check your spelling or try searching for a different brand.",
+     "title": "Brand not found"
+    },
+    "placeholder": "Search for brands"
+   },
+   "selection_type": "multi",
+   "title": "Brand",
+   "total_count_max": 99,
+   "translations": {
+    "no_results": {
+     "body": "Try adjusting other filters to see more results",
+     "title": "No items available with this filter"
+    }
+   }
+  },
+  {
+   "code": "status",
+   "display_type": "list",
+   "id": "3",
+   "is_lazy": true,
+   "options": [],
+   "position": 3,
+   "selection_type": "multi",
+   "title": "Condition",
+   "total_count_max": 99,
+   "translations": {
+    "no_results": {
+     "body": "Try adjusting other filters to see more results",
+     "title": "No items available with this filter"
+    }
+   }
+  },
+  {
+   "cell_type": "circle",
+   "code": "color",
+   "display_type": "grid",
+   "grid_columns": 3,
+   "id": "6",
+   "is_lazy": true,
+   "is_selection_highlighted": false,
+   "options": [],
+   "position": 4,
+   "selection_type": "multi",
+   "title": "Color",
+   "total_count_max": 99,
+   "translations": {
+    "no_results": {
+     "body": "Try adjusting other filters to see more results",
+     "title": "No items available with this filter"
+    }
+   }
+  },
+  {
+   "cell_type": "circle",
+   "code": "patterns",
+   "display_type": "grid",
+   "grid_columns": 3,
+   "id": "10",
+   "is_lazy": true,
+   "is_new_filter": false,
+   "is_selection_highlighted": false,
+   "options": [],
+   "position": 5,
+   "selection_type": "multi",
+   "title": "Pattern",
+   "total_count_max": 99,
+   "translations": {
+    "no_results": {
+     "body": "Try adjusting other filters to see more results",
+     "title": "No items available with this filter"
+    }
+   }
+  },
+  {
+   "code": "price",
+   "display_type": "hybrid_price",
+   "id": "9",
+   "options": [],
+   "position": 6,
+   "selection_type": "default",
+   "title": "Price"
+  },
+  {
+   "code": "material",
+   "display_type": "list",
+   "id": "8",
+   "is_lazy": true,
+   "is_new_filter": false,
+   "is_selection_highlighted": true,
+   "options": [],
+   "position": 7,
+   "selection_type": "multi",
+   "title": "Material",
+   "total_count_max": 99,
+   "translations": {
+    "no_results": {
+     "body": "Try adjusting other filters to see more results",
+     "title": "No items available with this filter"
+    }
+   }
+  }
+ ],
+ "selected_filters": [
+  {
+   "code": "size",
+   "ids": []
+  },
+  {
+   "code": "brand",
+   "ids": []
+  },
+  {
+   "code": "status",
+   "ids": []
+  },
+  {
+   "code": "color",
+   "ids": []
+  },
+  {
+   "code": "patterns",
+   "ids": []
+  },
+  {
+   "code": "material",
+   "ids": []
+  }
+ ]
+}

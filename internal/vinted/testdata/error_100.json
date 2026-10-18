@@ -1,0 +1,5 @@
+{
+  "code": 100,
+  "message": "Invalid authentication token",
+  "message_code": "invalid_authentication_token"
+}

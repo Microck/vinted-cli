@@ -1,0 +1,22 @@
+[
+  {
+    "domain": ".www.vinted.es",
+    "name": "access_token_web",
+    "value": "eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJzdWIiOiAiMzAwMDAwMDAwMSIsICJleHAiOiA0MTAyNDQ0ODAwLCAicHVycG9zZSI6ICJhY2Nlc3MifQ.c2lnbmF0dXJl",
+    "httpOnly": true,
+    "path": "/"
+  },
+  {
+    "domain": ".www.vinted.es",
+    "name": "refresh_token_web",
+    "value": "fake-refresh-token",
+    "httpOnly": true,
+    "path": "/"
+  },
+  {
+    "domain": ".vinted.es",
+    "name": "datadome",
+    "value": "fake-datadome",
+    "path": "/"
+  }
+]

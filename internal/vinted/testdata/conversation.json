@@ -1,0 +1,50 @@
+{
+  "conversation": {
+    "id": 6000000001,
+    "read_by_current_user": false,
+    "updated_at": "2026-10-17T12:00:00+02:00",
+    "description": "Yes it is",
+    "opposite_user": {
+      "id": 2000000001,
+      "login": "sample_seller"
+    },
+    "messages": [
+      {
+        "entity_type": "message",
+        "created_at_ts": "2026-10-17T11:00:00+02:00",
+        "entity": {
+          "id": 7000000001,
+          "body": "Hi! Is it still available?",
+          "user_id": 3000000001
+        }
+      },
+      {
+        "entity_type": "status_message",
+        "created_at_ts": "2026-10-17T11:00:01+02:00",
+        "entity": {
+          "title": "Conversation started",
+          "subtitle": ""
+        }
+      },
+      {
+        "entity_type": "message",
+        "created_at_ts": "2026-10-17T12:00:00+02:00",
+        "entity": {
+          "id": 7000000002,
+          "body": "Yes it is",
+          "user_id": 2000000001
+        }
+      }
+    ],
+    "transaction": {
+      "id": 8000000001,
+      "item_id": 1000000001,
+      "item_title": "Nike Air Max 90",
+      "offer_price": {
+        "amount": "45.0",
+        "currency_code": "EUR"
+      }
+    }
+  },
+  "code": 0
+}

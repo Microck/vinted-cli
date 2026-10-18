@@ -1,0 +1,41 @@
+{
+ "filter_code": "status",
+ "options": [
+  {
+   "description": "A brand-new, unused item with tags attached or in the original packaging.",
+   "id": "6",
+   "items_count": 38958,
+   "title": "New with tags",
+   "type": "default"
+  },
+  {
+   "description": "A brand-new, unused item without tags or original packaging.",
+   "id": "1",
+   "items_count": 50567,
+   "title": "New without tags",
+   "type": "default"
+  },
+  {
+   "description": "A lightly used item that may have slight imperfections, but still looks great.",
+   "id": "2",
+   "items_count": 245761,
+   "title": "Very good",
+   "type": "default"
+  },
+  {
+   "description": "A used item that may show imperfections and signs of wear.",
+   "id": "3",
+   "items_count": 64891,
+   "title": "Good",
+   "type": "default"
+  },
+  {
+   "description": "A frequently used item with imperfections and signs of wear.",
+   "id": "4",
+   "items_count": 6074,
+   "title": "Satisfactory",
+   "type": "default"
+  }
+ ],
+ "total_count_max": 99
+}

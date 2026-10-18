@@ -1,0 +1,42 @@
+{
+  "user_feedbacks": [
+    {
+      "id": 5000000001,
+      "created_at_ts": "2026-10-15T13:58:09+02:00",
+      "item_id": 1000000005,
+      "feedback": "Fast shipping, thanks!",
+      "rating": 5,
+      "feedback_user_id": 4000000001,
+      "system_feedback": false,
+      "user_id": 2000000001,
+      "user": {
+        "id": 4000000001,
+        "login": "sample_buyer",
+        "photo": null
+      }
+    },
+    {
+      "id": 5000000002,
+      "created_at_ts": "2026-10-13T15:05:37+02:00",
+      "item_id": 1000000006,
+      "feedback": "Item as described",
+      "rating": 4,
+      "feedback_user_id": 4000000002,
+      "system_feedback": false,
+      "user_id": 2000000001,
+      "user": {
+        "id": 4000000002,
+        "login": "other_buyer",
+        "photo": null
+      }
+    }
+  ],
+  "pagination": {
+    "current_page": 1,
+    "total_pages": 1,
+    "total_entries": 2,
+    "per_page": 20,
+    "time": 1700000000
+  },
+  "code": 0
+}

@@ -1,0 +1,132 @@
+---
+title: Authentication
+description: Import your browser cookies; the access token refreshes automatically.
+---
+
+Vinted has no password API worth using. Email, Google, Apple and Facebook accounts all end up
+at the same place, a pair of cookies in your browser. The CLI imports them and refreshes the
+short-lived access token itself, the same way the website does.
+
+<Callout type="idea" title="Why cookies">
+  A password login would have to get past captcha and bot protection, and would not work for
+  social logins at all; see ADR 0001 in the repository. Cookie import is the single supported
+  path because it works identically for every account type.
+</Callout>
+
+## Export the cookies
+
+<Steps>
+<Step>
+### Install a cookie exporter
+
+Any extension that exports Netscape-format cookies works. Cookie-Editor and "Get cookies.txt"
+are the common ones.
+
+![Cookie-Editor homepage, showing the supported browsers and the import/export feature](/auth/cookie-editor-home.png)
+</Step>
+
+<Step>
+### Log in to Vinted in your browser
+
+Sign in on the Vinted domain you use: `www.vinted.com`, `www.vinted.fr`, `www.vinted.es`
+and so on.
+</Step>
+
+<Step>
+### Export cookies for the site
+
+Export for that domain and save the file. The CLI needs `access_token_web` and
+`refresh_token_web`; it keeps the rest of the jar too, because the bot-protection cookies
+matter as much as the tokens.
+
+![Cookie-Editor feature list with the import and export option](/auth/cookie-editor-export.png)
+
+<Callout type="info" title="Formats">
+  The CLI reads Netscape format, the JSON array Cookie-Editor exports by default, or a raw
+  `name=value; name=value` cookie header.
+</Callout>
+</Step>
+
+<Step>
+### Import it
+
+```bash
+vinted auth login --cookies ~/Downloads/cookies.txt
+```
+
+Or run the interactive prompt and paste the file path or cookie header when asked:
+
+```bash
+vinted auth login
+```
+
+`--cookies-stdin` reads until end-of-file; use it when piping an export into the command.
+`--domain vinted.fr` picks the site explicitly; by default it is the host the cookies came
+from.
+</Step>
+</Steps>
+
+Login validates the session and tells you who you are, so a bad export fails at once
+rather than three commands later.
+
+## Staying logged in
+
+The access token lasts about an hour. Before it runs out, the next command that needs it
+calls Vinted's refresh endpoint with `refresh_token_web` and writes the new cookies back to
+`credentials.toml`. There is no background service to run.
+
+```bash
+vinted auth status          # local metadata; works offline
+vinted auth status --check  # make an authenticated call
+vinted auth refresh         # refresh now; nonzero exit on failure
+```
+
+Vinted can still expire or revoke the refresh token. When that happens commands exit `3` and
+you export the cookies again.
+
+## Profiles
+
+Each account gets its own session, domain and watches.
+
+```bash
+vinted auth login --cookies alt.txt --profile alt
+vinted profile list
+vinted profile use alt      # change the default
+vinted search "levis 501" --profile alt
+```
+
+## In CI
+
+Pass the raw cookie header by environment variable and no credentials file is needed:
+
+```bash
+export VINTED_COOKIES="access_token_web=...; refresh_token_web=..."
+vinted me favorites --format jsonl
+```
+
+Refreshed tokens from `VINTED_COOKIES` stay in memory and are never written to disk.
+
+## Where things live
+
+<Files>
+  <Folder name="$XDG_CONFIG_HOME/vinted-cli" defaultOpen>
+    <File name="config.toml" />
+    <File name="credentials.toml" />
+  </Folder>
+  <Folder name="$XDG_DATA_HOME/vinted-cli">
+    <File name="state.db" />
+  </Folder>
+</Files>
+
+The CLI writes `credentials.toml` at mode `0600`. It holds your session cookies, so treat it
+like a password and never share or commit it. Cookie and token values are redacted from every
+log line, `--debug` output and error the CLI prints.
+
+## Log out
+
+```bash
+vinted auth logout --profile alt   # keeps config and watches
+vinted profile remove alt          # removes everything for that account
+```
+
+Logging out deletes the stored cookies. It does not sign you out of the browser.

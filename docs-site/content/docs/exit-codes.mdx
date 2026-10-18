@@ -1,0 +1,46 @@
+---
+title: Exit codes
+description: What each exit status means, and which ones are worth retrying.
+---
+
+Every command exits with a code you can branch on. Nothing prints an error to stdout, so a
+script can read stdout and check `$?` independently.
+
+| Code | Meaning | Retry? |
+| --- | --- | --- |
+| `0` | Success, including "nothing changed" | - |
+| `1` | Generic failure | Maybe |
+| `2` | Usage: bad flags, bad id or URL, an interval or `--pages` over the cap, a command past its 60-request budget, an invalid proxy | No, fix the command |
+| `3` | Auth: no session, session rejected, refresh refused, verification required | No, log in again |
+| `4` | Not found: item, user, conversation or watch | No |
+| `5` | Blocked by Vinted's bot protection (challenge or block page, HTTP 429), or refused during the cooldown that follows | No. Wait out the cooldown, see [Staying unblocked](/docs/staying-unblocked) |
+| `6` | Network or timeout, including an unreachable proxy | Yes |
+| `7` | API changed: a known endpoint or page returned an unexpected shape | No, [report it](/docs/api-changes) |
+| `130` | Interrupted | - |
+
+## Using them
+
+```bash
+if ! vinted auth refresh; then
+  echo "session expired" >&2
+  exit 1
+fi
+```
+
+Retry the network, and stop on the rest. Never retry a `5`: the CLI has already paused
+every request to that site for hours, and a retry would only fail at once.
+
+```bash
+vinted watch check --all
+case $? in
+  0) ;;
+  6) sleep 300; vinted watch check --all ;;
+  5) echo "blocked by vinted; see: vinted cooldown" >&2; exit 5 ;;
+  *) exit 1 ;;
+esac
+```
+
+<Callout type="idea" title="Pair with the error envelope">
+  `--error-format json` prints a stable `category` string next to the code. Branch on that
+  when you log failures. See [Output](/docs/output).
+</Callout>

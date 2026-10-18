@@ -1,0 +1,19 @@
+{
+  "title": "vinted-cli",
+  "pages": [
+    "index",
+    "---Getting started---",
+    "install",
+    "auth",
+    "---Using it---",
+    "output",
+    "examples",
+    "watches",
+    "scheduling",
+    "staying-unblocked",
+    "---Reference---",
+    "reference",
+    "exit-codes",
+    "api-changes"
+  ]
+}

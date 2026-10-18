@@ -1,0 +1,64 @@
+---
+title: vinted-cli
+description: Drive Vinted from the terminal. Search, listings, chat and watches, JSON by default.
+---
+
+Vinted is a browser-and-app-only marketplace with no public API. `vinted` is a single Go
+binary that logs in with your own account by importing your browser cookies. It exposes the
+site's search, listing, selling and inbox features as noun-verb commands that print JSON.
+
+That makes the marketplace scriptable. Pipe a search into `jq`, keep a watch running
+from a systemd timer, or hand the whole thing to an agent.
+
+<Cards>
+  <Card title="Install" href="/docs/install">
+    One-line installer, package managers, or Go install.
+  </Card>
+  <Card title="Log in" href="/docs/auth">
+    Export your cookies once; the access token refreshes itself.
+  </Card>
+  <Card title="Command reference" href="/docs/reference">
+    Every command and flag, generated from the binary.
+  </Card>
+  <Card title="Watches" href="/docs/watches">
+    Turn a search into a stream of events.
+  </Card>
+  <Card title="Examples" href="/docs/examples">
+    Search, filters, listing details and Watch events.
+  </Card>
+</Cards>
+
+## What it looks like
+
+```bash
+vinted search "levis 501" --price-to 30 --order newest_first
+vinted item show 4923018331
+vinted chat send 18273645 "is this still available?"
+vinted watch add search "carhartt jacket" --price-to 40 --name carhartt
+vinted item create --title "carhartt jacket" --description "size M" --price 45 \
+  --category 2052 --condition "very good" --size M --image jacket.jpg
+```
+
+Commands print JSON by default.
+
+```bash
+vinted search "nike tech fleece" --format pretty
+vinted search "nike tech fleece" | jq -r '.items[] | "\(.price) \(.title)"'
+```
+
+## What it will not do
+
+Checkout, payments and shipping are out. So are settings edits and marking an item sold
+outside Vinted's order flow. The CLI reads and writes the things you would do while
+browsing, selling and talking to members, and stops there.
+
+<Callout type="info" title="Verified accounts">
+  Vinted lets only accounts it has verified use chat, offers, favorites and listing changes.
+  Until then those commands exit 3 with a link to the verification page.
+</Callout>
+
+<Callout type="warn" title="Unofficial">
+  Vinted publishes no API. This talks to the same endpoints and pages the website uses, so it
+  can break when they change something. When that happens the CLI fails loudly with a
+  prefilled issue link rather than returning nothing. See [API changes](/docs/api-changes).
+</Callout>

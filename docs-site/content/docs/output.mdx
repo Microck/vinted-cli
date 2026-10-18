@@ -1,0 +1,65 @@
+---
+title: Output and formats
+description: JSON by default, a table when you want to read it, JSONL when you want to pipe it.
+---
+
+Commands use JSON by default. Errors go to stderr rather than stdout.
+
+```bash
+vinted search "levis 501" | jq '.items[0]'
+```
+
+## Formats
+
+<Tabs items={['json', 'pretty', 'jsonl', 'toon']} id="format">
+  <Tab value="json">
+    The default format prints one JSON document.
+
+    ```bash
+    vinted search "levis 501"
+    ```
+  </Tab>
+  <Tab value="pretty">
+    It prints a compact table for reading in the terminal: id, price, flags, title, brand, size, URL.
+
+    ```bash
+    vinted search "levis 501" --format pretty
+    ```
+  </Tab>
+  <Tab value="jsonl">
+    It prints one object per line, for streams and pipes. Use it for watch events.
+
+    ```bash
+    vinted watch check --all --format jsonl
+    ```
+  </Tab>
+  <Tab value="toon">
+    It prints TOON output for language-model context.
+
+    ```bash
+    vinted search "levis 501" --format toon
+    ```
+  </Tab>
+</Tabs>
+
+Colour follows `NO_COLOR` and switches off when stdout is not a terminal.
+
+## Errors
+
+Errors are human-readable by default. For scripts, ask for the envelope:
+
+```bash
+vinted --error-format json item show 1
+```
+
+```json
+{
+  "code": 4,
+  "category": "not_found",
+  "message": "no item with that id",
+  "endpoint": "GET /items/{id}",
+  "suggested_commands": ["vinted search ..."]
+}
+```
+
+The `category` is stable and worth branching on. The prose in `message` is not.

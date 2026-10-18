@@ -1,0 +1,11 @@
+{
+  "conversation": {
+    "id": 6000000003,
+    "opposite_user": {
+      "id": 2000000001,
+      "login": "sample_seller"
+    },
+    "messages": []
+  },
+  "code": 0
+}

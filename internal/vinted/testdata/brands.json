@@ -1,0 +1,32 @@
+{
+  "brands": [
+    {
+      "id": 53,
+      "title": "Nike",
+      "slug": "nike",
+      "favourite_count": 1,
+      "item_count": 62698363,
+      "path": "/brand/53-nike",
+      "url": "https://www.vinted.fr/brand/53-nike",
+      "is_favourite": false
+    },
+    {
+      "id": 2703,
+      "title": "Jordan",
+      "slug": "jordan",
+      "favourite_count": 1,
+      "item_count": 5049155,
+      "path": "/brand/2703-jordan",
+      "url": "https://www.vinted.fr/brand/2703-jordan",
+      "is_favourite": false
+    }
+  ],
+  "pagination": {
+    "current_page": 1,
+    "total_pages": 1,
+    "total_entries": 2,
+    "per_page": 20,
+    "time": 1700000000
+  },
+  "code": 0
+}

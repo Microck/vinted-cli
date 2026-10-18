@@ -1,0 +1,40 @@
+{
+  "conversations": [
+    {
+      "id": 6000000001,
+      "item_count": 1,
+      "description": "Is it still available?",
+      "unread": true,
+      "available": true,
+      "updated_at": "2026-10-17T12:00:00+02:00",
+      "opposite_user": {
+        "id": 2000000001,
+        "login": "sample_seller",
+        "photo": null
+      },
+      "item_photos": []
+    },
+    {
+      "id": 6000000002,
+      "item_count": 1,
+      "description": "Thanks!",
+      "unread": false,
+      "available": true,
+      "updated_at": "2026-10-16T09:00:00+02:00",
+      "opposite_user": {
+        "id": 4000000001,
+        "login": "sample_buyer",
+        "photo": null
+      },
+      "item_photos": []
+    }
+  ],
+  "pagination": {
+    "current_page": 1,
+    "total_pages": 1,
+    "total_entries": 2,
+    "per_page": 20,
+    "time": 1700000000
+  },
+  "code": 0
+}

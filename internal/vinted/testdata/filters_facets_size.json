@@ -1,0 +1,115 @@
+{
+ "filter_code": "size",
+ "options": [
+  {
+   "id": "WOMEN-LT",
+   "options": [
+    {
+     "id": "1226",
+     "items_count": 6997,
+     "title": "XXXS / US 00",
+     "type": "default"
+    },
+    {
+     "id": "102",
+     "items_count": 16240,
+     "title": "XXS / US 0",
+     "type": "default"
+    },
+    {
+     "id": "2",
+     "items_count": 33307,
+     "title": "XS / US 2",
+     "type": "default"
+    },
+    {
+     "id": "3",
+     "items_count": 87865,
+     "title": "S / US 4-6",
+     "type": "default"
+    },
+    {
+     "id": "4",
+     "items_count": 83417,
+     "title": "M / US 8-10",
+     "type": "default"
+    },
+    {
+     "id": "5",
+     "items_count": 65825,
+     "title": "L / US 12-14",
+     "type": "default"
+    },
+    {
+     "id": "6",
+     "items_count": 37975,
+     "title": "XL / US 16-18",
+     "type": "default"
+    },
+    {
+     "id": "7",
+     "items_count": 11283,
+     "title": "XXL / US 20-22",
+     "type": "default"
+    },
+    {
+     "id": "310",
+     "items_count": 5761,
+     "title": "XXXL / US 24-26",
+     "type": "default"
+    },
+    {
+     "id": "311",
+     "items_count": 3796,
+     "title": "4XL / US 28-30",
+     "type": "default"
+    },
+    {
+     "id": "312",
+     "items_count": 1827,
+     "title": "5XL / US 32-34",
+     "type": "default"
+    },
+    {
+     "id": "1227",
+     "items_count": 405,
+     "title": "6XL / US 36-38",
+     "type": "default"
+    },
+    {
+     "id": "1228",
+     "items_count": 154,
+     "title": "7XL / US 40-42",
+     "type": "default"
+    },
+    {
+     "id": "1229",
+     "items_count": 123,
+     "title": "8XL / US 44-46",
+     "type": "default"
+    },
+    {
+     "id": "1230",
+     "items_count": 57,
+     "title": "9XL / US 48",
+     "type": "default"
+    },
+    {
+     "id": "90",
+     "items_count": 1673,
+     "title": "One size",
+     "type": "default"
+    },
+    {
+     "id": "97",
+     "items_count": 49544,
+     "title": "Other",
+     "type": "default"
+    }
+   ],
+   "title": "Women's items",
+   "type": "group"
+  }
+ ],
+ "total_count_max": 99
+}

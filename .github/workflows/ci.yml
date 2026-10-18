@@ -1,0 +1,56 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: format
+        run: test -z "$(gofmt -l .)"
+      - name: vet
+        run: go vet ./...
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+      - name: test
+        run: go test ./... -count=1
+      - name: build
+        run: go build ./...
+      # The command reference is generated from the cobra tree. If a flag moved
+      # and nobody regenerated, the published docs are wrong, so fail here.
+      - name: docs reference is current
+        run: make docs-check
+
+  docs-site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+      - name: generate command reference
+        run: make docs
+      - name: install
+        run: npm ci
+        working-directory: docs-site
+      - name: typecheck
+        run: npm run typecheck
+        working-directory: docs-site
+      - name: build
+        run: npm run build
+        working-directory: docs-site

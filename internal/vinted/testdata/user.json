@@ -1,0 +1,35 @@
+{
+  "user": {
+    "id": 2000000001,
+    "anon_id": "00000000-0000-4000-8000-000000000001",
+    "login": "sample_seller",
+    "country_id": 16,
+    "about": "",
+    "profile_url": "https://www.vinted.fr/member/2000000001-sample_seller",
+    "real_name": null,
+    "email": null,
+    "verification": {
+      "email": {
+        "valid": true,
+        "available": true
+      },
+      "facebook": {
+        "valid": false,
+        "verified_at": null,
+        "available": true
+      }
+    },
+    "business": false,
+    "item_count": 2,
+    "feedback_count": 4,
+    "feedback_reputation": 0.95,
+    "followers_count": 7,
+    "following_count": 3,
+    "country_code": "FR",
+    "country_title": "France",
+    "city": "Lyon",
+    "last_loged_on_ts": "2026-10-17T14:30:13+02:00",
+    "is_online": false
+  },
+  "code": 0
+}

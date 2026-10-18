@@ -1,0 +1,29 @@
+{
+  "catalogs": [
+    {
+      "id": 1904,
+      "title": "Women",
+      "path": "",
+      "catalogs": [
+        {
+          "id": 4,
+          "title": "Clothing",
+          "catalogs": [
+            {
+              "id": 1242,
+              "title": "Trainers",
+              "catalogs": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Men",
+      "path": "",
+      "catalogs": []
+    }
+  ],
+  "code": 0
+}

@@ -1,0 +1,318 @@
+{
+ "filter_code": "material",
+ "options": [
+  {
+   "id": "149",
+   "items_count": 70,
+   "title": "Acrylic",
+   "type": "default"
+  },
+  {
+   "id": "122",
+   "items_count": 11,
+   "title": "Alpaca",
+   "type": "default"
+  },
+  {
+   "id": "440",
+   "items_count": 105,
+   "title": "Bamboo",
+   "type": "default"
+  },
+  {
+   "id": "441",
+   "items_count": 71,
+   "title": "Canvas",
+   "type": "default"
+  },
+  {
+   "id": "442",
+   "items_count": 19,
+   "title": "Cardboard",
+   "type": "default"
+  },
+  {
+   "id": "123",
+   "items_count": 17,
+   "title": "Cashmere",
+   "type": "default"
+  },
+  {
+   "id": "443",
+   "items_count": 9,
+   "title": "Ceramic",
+   "type": "default"
+  },
+  {
+   "id": "444",
+   "items_count": 22,
+   "title": "Chiffon",
+   "type": "default"
+  },
+  {
+   "id": "299",
+   "items_count": 2650,
+   "title": "Corduroy",
+   "type": "default"
+  },
+  {
+   "id": "44",
+   "items_count": 78648,
+   "title": "Cotton",
+   "type": "default"
+  },
+  {
+   "id": "303",
+   "items_count": 363228,
+   "title": "Denim",
+   "type": "default"
+  },
+  {
+   "id": "445",
+   "items_count": 1862,
+   "title": "Down",
+   "type": "default"
+  },
+  {
+   "id": "53",
+   "items_count": 10950,
+   "title": "Elastane",
+   "type": "default"
+  },
+  {
+   "id": "446",
+   "items_count": 26,
+   "title": "Faux fur",
+   "type": "default"
+  },
+  {
+   "id": "447",
+   "items_count": 316,
+   "title": "Faux leather",
+   "type": "default"
+  },
+  {
+   "id": "448",
+   "items_count": 98,
+   "title": "Felt",
+   "type": "default"
+  },
+  {
+   "id": "451",
+   "items_count": 295,
+   "title": "Flannel",
+   "type": "default"
+  },
+  {
+   "id": "120",
+   "items_count": 140,
+   "title": "Fleece",
+   "type": "default"
+  },
+  {
+   "id": "449",
+   "items_count": 5,
+   "title": "Foam",
+   "type": "default"
+  },
+  {
+   "id": "452",
+   "items_count": 23,
+   "title": "Glass",
+   "type": "default"
+  },
+  {
+   "id": "453",
+   "items_count": 931,
+   "title": "Gold",
+   "type": "default"
+  },
+  {
+   "id": "454",
+   "items_count": 1,
+   "title": "Jute",
+   "type": "default"
+  },
+  {
+   "id": "455",
+   "items_count": 13,
+   "title": "Lace",
+   "type": "default"
+  },
+  {
+   "id": "302",
+   "items_count": 16,
+   "title": "Latex",
+   "type": "default"
+  },
+  {
+   "id": "43",
+   "items_count": 1387,
+   "title": "Leather",
+   "type": "default"
+  },
+  {
+   "id": "146",
+   "items_count": 74,
+   "title": "Linen",
+   "type": "default"
+  },
+  {
+   "id": "456",
+   "items_count": 13,
+   "title": "Mesh",
+   "type": "default"
+  },
+  {
+   "id": "457",
+   "items_count": 1022,
+   "title": "Metal",
+   "type": "default"
+  },
+  {
+   "id": "178",
+   "items_count": 6,
+   "title": "Neoprene",
+   "type": "default"
+  },
+  {
+   "id": "52",
+   "items_count": 164,
+   "title": "Nylon",
+   "type": "default"
+  },
+  {
+   "id": "458",
+   "items_count": 109,
+   "title": "Paper",
+   "type": "default"
+  },
+  {
+   "id": "305",
+   "items_count": 43,
+   "title": "Patent leather",
+   "type": "default"
+  },
+  {
+   "id": "300",
+   "items_count": 76,
+   "title": "Plastic",
+   "type": "default"
+  },
+  {
+   "id": "45",
+   "items_count": 17437,
+   "title": "Polyester",
+   "type": "default"
+  },
+  {
+   "id": "459",
+   "items_count": 9,
+   "title": "Porcelain",
+   "type": "default"
+  },
+  {
+   "id": "460",
+   "items_count": 1,
+   "title": "Rattan",
+   "type": "default"
+  },
+  {
+   "id": "48",
+   "items_count": 2181,
+   "title": "Rayon",
+   "type": "default"
+  },
+  {
+   "id": "301",
+   "items_count": 76,
+   "title": "Rubber",
+   "type": "default"
+  },
+  {
+   "id": "311",
+   "items_count": 38,
+   "title": "Satin",
+   "type": "default"
+  },
+  {
+   "id": "226",
+   "items_count": 316,
+   "title": "Sequin",
+   "type": "default"
+  },
+  {
+   "id": "49",
+   "items_count": 19,
+   "title": "Silk",
+   "type": "default"
+  },
+  {
+   "id": "461",
+   "items_count": 3129,
+   "title": "Silver",
+   "type": "default"
+  },
+  {
+   "id": "468",
+   "items_count": 4,
+   "title": "Steel",
+   "type": "default"
+  },
+  {
+   "id": "462",
+   "items_count": 2022,
+   "title": "Stone",
+   "type": "default"
+  },
+  {
+   "id": "463",
+   "items_count": 3,
+   "title": "Straw",
+   "type": "default"
+  },
+  {
+   "id": "298",
+   "items_count": 77,
+   "title": "Suede",
+   "type": "default"
+  },
+  {
+   "id": "464",
+   "items_count": 2,
+   "title": "Tulle",
+   "type": "default"
+  },
+  {
+   "id": "465",
+   "items_count": 3,
+   "title": "Tweed",
+   "type": "default"
+  },
+  {
+   "id": "177",
+   "items_count": 29,
+   "title": "Velour",
+   "type": "default"
+  },
+  {
+   "id": "466",
+   "items_count": 317,
+   "title": "Velvet",
+   "type": "default"
+  },
+  {
+   "id": "467",
+   "items_count": 16,
+   "title": "Wood",
+   "type": "default"
+  },
+  {
+   "id": "46",
+   "items_count": 15,
+   "title": "Wool",
+   "type": "default"
+  }
+ ],
+ "total_count_max": 99
+}

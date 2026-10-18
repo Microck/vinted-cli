@@ -1,0 +1,66 @@
+---
+title: Install
+description: Get the binary on macOS, Linux or Windows.
+---
+<Callout type="info" title="Release binaries">
+  Releases ship `checksums.txt` with a GitHub provenance attestation.
+</Callout>
+
+## Installer
+
+Installs the latest release into `~/.local/bin` (override with `VINTED_INSTALL_DIR`):
+
+```bash
+curl -fsSL https://vinted.micr.dev/install.sh | sh
+```
+
+## Homebrew
+
+```bash
+brew install Microck/tap/vinted
+vinted --version
+```
+
+## Scoop
+
+```powershell
+scoop bucket add microck https://github.com/Microck/scoop-bucket
+scoop install microck/vinted
+vinted --version
+```
+
+## npm
+
+```bash
+npm install -g vinted-cli
+vinted --version
+```
+
+The postinstall step downloads the matching release archive for your platform, checks its
+SHA-256 against `checksums.txt`, and installs the binary.
+
+## Arch Linux
+
+```bash
+yay -S vinted-cli-bin
+vinted --version
+```
+
+The package covers Linux amd64 and arm64, verifies the checksum and installs the binary.
+
+## Go install
+
+```bash
+go install github.com/Microck/vinted-cli/cmd/vinted@latest
+vinted --version
+```
+
+## Check it works
+
+```bash
+vinted --version
+vinted doctor
+```
+
+`doctor` checks that the config parses, the session refreshes and Vinted is reachable. Run it
+first whenever something behaves oddly.

@@ -1,0 +1,306 @@
+{
+ "filter_code": "brand",
+ "options": [
+  {
+   "id": "10",
+   "items_count": 40654,
+   "title": "Levi's",
+   "type": "default"
+  },
+  {
+   "id": "4045",
+   "items_count": 23333,
+   "title": "Old Navy",
+   "type": "default"
+  },
+  {
+   "id": "63",
+   "items_count": 13956,
+   "title": "Lee",
+   "type": "default"
+  },
+  {
+   "id": "184",
+   "items_count": 13647,
+   "title": "American Eagle",
+   "type": "default"
+  },
+  {
+   "id": "174944",
+   "items_count": 12432,
+   "title": "Gloria Vanderbilt",
+   "type": "default"
+  },
+  {
+   "id": "93",
+   "items_count": 9349,
+   "title": "Abercrombie & Fitch",
+   "type": "default"
+  },
+  {
+   "id": "12",
+   "items_count": 7185,
+   "title": "Zara",
+   "type": "default"
+  },
+  {
+   "id": "6",
+   "items_count": 6493,
+   "title": "GAP",
+   "type": "default"
+  },
+  {
+   "id": "43377",
+   "items_count": 6346,
+   "title": "PacSun",
+   "type": "default"
+  },
+  {
+   "id": "11493",
+   "items_count": 6219,
+   "title": "Hollister",
+   "type": "default"
+  },
+  {
+   "id": "710234",
+   "items_count": 5879,
+   "title": "Universal Thread",
+   "type": "default"
+  },
+  {
+   "id": "55015",
+   "items_count": 5186,
+   "title": "Madewell",
+   "type": "default"
+  },
+  {
+   "id": "580151",
+   "items_count": 4846,
+   "title": "Time and Tru",
+   "type": "default"
+  },
+  {
+   "id": "42337",
+   "items_count": 4612,
+   "title": "Lucky Brand",
+   "type": "default"
+  },
+  {
+   "id": "220066",
+   "items_count": 4557,
+   "title": "Maurices",
+   "type": "default"
+  },
+  {
+   "id": "1519",
+   "items_count": 4170,
+   "title": "A\u00e9ropostale",
+   "type": "default"
+  },
+  {
+   "id": "172724",
+   "items_count": 4143,
+   "title": "Shein",
+   "type": "default"
+  },
+  {
+   "id": "259",
+   "items_count": 3920,
+   "title": "Wrangler",
+   "type": "default"
+  },
+  {
+   "id": "7",
+   "items_count": 3748,
+   "title": "H&M",
+   "type": "default"
+  },
+  {
+   "id": "1241212",
+   "items_count": 3697,
+   "title": "Wild Fable",
+   "type": "default"
+  },
+  {
+   "id": "109480",
+   "items_count": 2950,
+   "title": "Sonoma",
+   "type": "default"
+  },
+  {
+   "id": "17299",
+   "items_count": 2776,
+   "title": "No Boundaries",
+   "type": "default"
+  },
+  {
+   "id": "157794",
+   "items_count": 2750,
+   "title": "Fashion Nova",
+   "type": "default"
+  },
+  {
+   "id": "20179",
+   "items_count": 2661,
+   "title": "J.Crew",
+   "type": "default"
+  },
+  {
+   "id": "8515",
+   "items_count": 2561,
+   "title": "Express",
+   "type": "default"
+  },
+  {
+   "id": "13641",
+   "items_count": 2371,
+   "title": "LOFT",
+   "type": "default"
+  },
+  {
+   "id": "345187",
+   "items_count": 2304,
+   "title": "St. John's Bay",
+   "type": "default"
+  },
+  {
+   "id": "88",
+   "items_count": 2127,
+   "title": "Ralph Lauren",
+   "type": "default"
+  },
+  {
+   "id": "6715001",
+   "items_count": 2102,
+   "title": "NYDJ",
+   "type": "default"
+  },
+  {
+   "id": "62916",
+   "items_count": 1933,
+   "title": "Bandolino",
+   "type": "default"
+  },
+  {
+   "id": "95018",
+   "items_count": 1869,
+   "title": "Kensie",
+   "type": "default"
+  },
+  {
+   "id": "143978",
+   "items_count": 1858,
+   "title": "Chico's",
+   "type": "default"
+  },
+  {
+   "id": "675418",
+   "items_count": 1793,
+   "title": "Agolde",
+   "type": "default"
+  },
+  {
+   "id": "12813",
+   "items_count": 1731,
+   "title": "Forever 21",
+   "type": "default"
+  },
+  {
+   "id": "35693",
+   "items_count": 1728,
+   "title": "Miss Me",
+   "type": "default"
+  },
+  {
+   "id": "71648",
+   "items_count": 1650,
+   "title": "Seven7",
+   "type": "default"
+  },
+  {
+   "id": "9075",
+   "items_count": 1642,
+   "title": "True Religion",
+   "type": "default"
+  },
+  {
+   "id": "1903",
+   "items_count": 1632,
+   "title": "Banana Republic",
+   "type": "default"
+  },
+  {
+   "id": "3879189",
+   "items_count": 1601,
+   "title": "Judy Blue",
+   "type": "default"
+  },
+  {
+   "id": "4305",
+   "items_count": 1595,
+   "title": "BDG",
+   "type": "default"
+  },
+  {
+   "id": "6413639",
+   "items_count": 1284,
+   "title": "Levi Strauss & Co.",
+   "type": "default"
+  },
+  {
+   "id": "96024",
+   "items_count": 1268,
+   "title": "style & co.",
+   "type": "default"
+  },
+  {
+   "id": "2382884",
+   "items_count": 1168,
+   "title": "KUT from the Kloth",
+   "type": "default"
+  },
+  {
+   "id": "94",
+   "items_count": 1157,
+   "title": "Tommy Hilfiger",
+   "type": "default"
+  },
+  {
+   "id": "1613",
+   "items_count": 1123,
+   "title": "Faded Glory",
+   "type": "default"
+  },
+  {
+   "id": "4186814",
+   "items_count": 1114,
+   "title": "edikted",
+   "type": "default"
+  },
+  {
+   "id": "173156",
+   "items_count": 1062,
+   "title": "Kancan",
+   "type": "default"
+  },
+  {
+   "id": "74004",
+   "items_count": 969,
+   "title": "Talbots",
+   "type": "default"
+  },
+  {
+   "id": "1308677",
+   "items_count": 960,
+   "title": "Terra & Sky",
+   "type": "default"
+  },
+  {
+   "id": "6393106",
+   "items_count": 920,
+   "title": "Calvin Klein Jeans",
+   "type": "default"
+  }
+ ],
+ "total_count_max": 99
+}

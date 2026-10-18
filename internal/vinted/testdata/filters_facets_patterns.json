@@ -1,0 +1,162 @@
+{
+ "filter_code": "patterns",
+ "options": [
+  {
+   "description": "",
+   "id": "28",
+   "items_count": 2473,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/patterns/att-value-28.png"
+   },
+   "title": "Animal print",
+   "type": "default"
+  },
+  {
+   "description": "",
+   "id": "29",
+   "items_count": 450,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/patterns/att-value-29.png"
+   },
+   "title": "Camouflage",
+   "type": "default"
+  },
+  {
+   "description": "",
+   "id": "23",
+   "items_count": 429,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/patterns/att-value-23.png"
+   },
+   "title": "Checks & plaid",
+   "type": "default"
+  },
+  {
+   "description": "",
+   "id": "10",
+   "items_count": 85,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/patterns/att-value-10.png"
+   },
+   "title": "Chevron",
+   "type": "default"
+  },
+  {
+   "description": "",
+   "id": "590",
+   "items_count": 326,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/patterns/att-value-590.png"
+   },
+   "title": "Ombre",
+   "type": "default"
+  },
+  {
+   "description": "",
+   "id": "5",
+   "items_count": 762,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/patterns/att-value-5.png"
+   },
+   "title": "Floral",
+   "type": "default"
+  },
+  {
+   "description": "",
+   "id": "24",
+   "items_count": 26,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/patterns/att-value-24.png"
+   },
+   "title": "Houndstooth",
+   "type": "default"
+  },
+  {
+   "description": "",
+   "id": "26",
+   "items_count": 1512,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/patterns/att-value-26.png"
+   },
+   "title": "Graphic & logos",
+   "type": "default"
+  },
+  {
+   "description": "",
+   "id": "9",
+   "items_count": 248,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/patterns/att-value-9.png"
+   },
+   "title": "Paisley",
+   "type": "default"
+  },
+  {
+   "description": "",
+   "id": "6",
+   "items_count": 293,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/patterns/att-value-6.png"
+   },
+   "title": "Polka dot",
+   "type": "default"
+  },
+  {
+   "description": "",
+   "id": "21",
+   "items_count": 268917,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/patterns/att-value-21.png"
+   },
+   "title": "Solid",
+   "type": "default"
+  },
+  {
+   "description": "",
+   "id": "22",
+   "items_count": 1169,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/patterns/att-value-22.png"
+   },
+   "title": "Stripes",
+   "type": "default"
+  },
+  {
+   "description": "",
+   "id": "119",
+   "items_count": 366,
+   "prefix": {
+    "size": "medium",
+    "type": "image",
+    "url": "https://static-assets.vinted.com/ontologies/icons/attributes/patterns/att-value-119.png"
+   },
+   "title": "Tie dye",
+   "type": "default"
+  }
+ ],
+ "total_count_max": 99
+}

@@ -1,0 +1,86 @@
+name: Deploy documentation to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs-site/**
+      - scripts/install.sh
+      - cmd/**
+      - internal/**
+      - go.mod
+      - go.sum
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      NPM_CONFIG_USER_AGENT: OpenAI File Downloader, XaiImageApiFetch/1.0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+      - uses: actions/configure-pages@v6
+      - run: make docs
+      - run: npm ci
+        working-directory: docs-site
+      - run: npm run typecheck
+        working-directory: docs-site
+      - run: npm run build
+        working-directory: docs-site
+      - name: Verify static search and published files
+        working-directory: docs-site
+        run: |
+          cmp ../scripts/install.sh out/install.sh
+          test -s out/docs/index.html
+          test -s out/llms.txt
+          test -s out/api/search
+          python3 -m http.server 8765 --directory out > /tmp/vinted-pages-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in {1..20}; do
+            curl -fsS -A 'OpenAI File Downloader, XaiImageApiFetch/1.0' http://127.0.0.1:8765/api/search -o /tmp/vinted-search.json && break
+            sleep 1
+          done
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { staticClient } from 'fumadocs-core/search/client/orama-static';
+          const client = staticClient({ from: 'http://127.0.0.1:8765/api/search' });
+          for (const query of ['install', 'watch', 'profile']) {
+            const results = await client.search(query);
+            assert(results.length > 0, `No static search results for ${query}`);
+            assert(results.some((result) => result.url.startsWith('/docs/')));
+            console.log(`${query}: ${results.length} results`);
+          }
+          NODE
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs-site/out
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v5
+        id: deployment

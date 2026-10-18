@@ -1,0 +1,1 @@
+Cookie: access_token_web=eyJhbGciOiAibm9uZSIsICJ0eXAiOiAiSldUIn0.eyJzdWIiOiAiMzAwMDAwMDAwMSIsICJleHAiOiA0MTAyNDQ0ODAwLCAicHVycG9zZSI6ICJhY2Nlc3MifQ.c2lnbmF0dXJl; refresh_token_web=fake-refresh-token; datadome=fake-datadome

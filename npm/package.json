@@ -1,0 +1,34 @@
+{
+  "name": "vinted-cli",
+  "version": "0.1.0",
+  "description": "Terminal CLI for Vinted",
+  "license": "MIT",
+  "author": "Microck",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Microck/vinted-cli.git",
+    "directory": "npm"
+  },
+  "homepage": "https://github.com/Microck/vinted-cli",
+  "bugs": "https://github.com/Microck/vinted-cli/issues",
+  "bin": {
+    "vinted": "cli.cjs",
+    "vinted-cli": "cli.cjs"
+  },
+  "scripts": {
+    "postinstall": "node install.cjs"
+  },
+  "files": ["cli.cjs", "install.cjs", "LICENSE"],
+  "engines": {
+    "node": ">=22"
+  },
+  "os": ["linux", "darwin", "win32"],
+  "cpu": ["x64", "arm64"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "extract-zip": "2.0.1",
+    "tar": "7.5.22"
+  }
+}

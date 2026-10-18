@@ -1,0 +1,58 @@
+---
+title: Examples
+description: Search, filters, listing details and Watch events in the terminal.
+---
+
+These examples read public listings unless they say otherwise.
+
+## Search
+
+Search defaults to JSON. Pass `--format pretty` to view a table in the terminal, or keep JSON for pipelines.
+
+```bash
+vinted search "levis 501" --price-to 30 --order newest_first --limit 8 --format pretty
+```
+
+## Find ids and apply filters
+
+Look up Brand and Catalog ids, then pass them to the filter flags. Id flags repeat.
+
+```bash
+vinted brand search nike --format pretty
+vinted category list --format pretty
+vinted search "air max" --brand 53 --catalog 1242 --size 208 --condition very_good --format pretty
+```
+
+Any catalog parameter without a flag goes through `--filter`:
+
+```bash
+vinted search "wool coat" --filter material_ids[]=44
+```
+
+## Inspect a listing
+
+Use the item id or paste its URL from any Vinted domain.
+
+```bash
+vinted item show 4923018331 --format pretty
+vinted item images https://www.vinted.fr/items/4923018331-levis-501
+```
+
+## Track changes with a Watch
+
+Create a Watch to compare future search results. `--emit-initial` reports the current results as `item.new` events.
+
+```bash
+vinted watch add search "levis 501" --name levis --price-to 30 --interval 30m --emit-initial --format pretty
+vinted watch events levis --format pretty
+```
+
+## Your account
+
+These need a session (see [Authentication](/docs/auth)).
+
+```bash
+vinted me favorites --format pretty
+vinted chat list --unread --format pretty
+echo "would you take 20?" | vinted chat send 18273645 -
+```

@@ -1,0 +1,93 @@
+---
+title: Watches
+description: Turn a search, an item or a seller into a stream of events.
+---
+
+A watch is a saved query the CLI re-runs on demand and diffs against what it saw last time.
+What comes out is events, not results: only what changed since the previous check.
+
+```bash
+vinted watch add search "levis 501" --price-to 30 --name levis
+vinted watch add item 4923018331 --name jacket
+vinted watch add seller 123456789 --name fav-seller
+vinted watch check --all
+```
+
+## What you get
+
+Search watches diff the first `--pages` pages: ids they have not seen, and price changes on
+ids they have. Item watches diff the item page. Seller watches diff the member's wardrobe.
+
+Event types are `item.new`, `item.price_changed`, `item.reserved`, `item.unreserved`,
+`item.sold`, `item.removed` and `seller.new_item`.
+
+```json
+{
+  "type": "item.price_changed",
+  "watch": "levis",
+  "profile": "default",
+  "at": "2026-10-17T10:40:00Z",
+  "item": {
+    "id": 4923018331,
+    "title": "...",
+    "price": 25,
+    "currency": "EUR",
+    "url": "..."
+  },
+  "change": { "from": 30, "to": 25 }
+}
+```
+
+Delivery to sinks is best-effort. A sink that fails is logged and the check still
+commits, so the event is not retried. The diff pipeline is guaranteed: the CLI commits
+state after delivery is attempted, so a check that crashes before committing re-runs
+and re-reports what it saw. Deduplicate on the event fields if that matters for your sink.
+
+```bash
+vinted watch events levis --since 24h
+```
+
+## Sinks
+
+By default events go to stdout. Sinks send them somewhere else, and live in `config.toml`
+rather than the database so they are easy to review and version.
+
+<Tabs items={['ntfy', 'webhook', 'exec']} id="sink-type">
+  <Tab value="ntfy">
+    ```toml
+    [sinks.phone]
+    type = "ntfy"
+    url = "https://ntfy.sh"
+    topic = "vinted"
+    token_file = "~/.config/vinted-cli/ntfy-token"
+    ```
+  </Tab>
+  <Tab value="webhook">
+    ```toml
+    [sinks.discord]
+    type = "webhook"
+    url = "https://discord.com/api/webhooks/..."
+    template = "discord"
+    ```
+
+    The body is the event JSON. `template = "discord"` wraps it in `{content: ...}`.
+  </Tab>
+  <Tab value="exec">
+    ```toml
+    [sinks.script]
+    type = "exec"
+    command = ["~/bin/on-vinted-event"]
+    ```
+
+    The command receives one event as JSON on stdin, per event.
+  </Tab>
+</Tabs>
+
+```bash
+vinted sink list
+vinted sink test phone   # sends a synthetic event
+```
+
+<Callout type="info" title="Test the sink before you rely on it">
+  Run `sink test` once when you add a sink, so you know the watch notifies you.
+</Callout>
