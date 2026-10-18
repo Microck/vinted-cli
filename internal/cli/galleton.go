@@ -337,8 +337,14 @@ func (a *App) carryCooldown(ctx context.Context, c *galleton.Client) error {
 		if host == current {
 			base = a.Client.Base
 		}
+		provider := vinted.Provider(base)
+		// Every custom host maps to one provider name, but the engine is set up
+		// for this profile's custom site only: another one's cooldown is not ours.
+		if provider == "vinted-custom" && host != current {
+			continue
+		}
 		if d := time.Until(until); d > 0 {
-			if err := c.Pause(ctx, vinted.Provider(base), d); err != nil {
+			if err := c.Pause(ctx, provider, d); err != nil {
 				return fmt.Errorf("could not pause the session engine for the cooldown on %s: %w", host, managedError(err))
 			}
 		}

@@ -69,6 +69,26 @@ func TestBlockPausesTheEngineUntilCooldownClear(t *testing.T) {
 	h.must("", "me", "show")
 }
 
+// A cooldown on another custom site does not pause this site's engine
+// provider: every custom host shares the provider name.
+func TestOtherCustomSiteCooldownLeavesTheEngineRunning(t *testing.T) {
+	h := newHarness(t)
+	path := filepath.Join(h.home, "state", "vinted-cli", "throttle.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	until := time.Now().Add(6 * time.Hour).UTC().Format(time.RFC3339)
+	st := `{"sites":{"127.0.0.2:1":{"blocked_until":"` + until + `","block_cause":"test"}}}`
+	if err := os.WriteFile(path, []byte(st), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.login()
+	if until := h.pausedUntil(); until != nil {
+		t.Fatalf("engine paused until %v for another site's cooldown", until)
+	}
+	h.must("", "me", "show")
+}
+
 // One engine, one egress: a command with a different proxy never borrows a
 // running engine that would renew through another route.
 func TestEngineRefusesADifferentProxy(t *testing.T) {
