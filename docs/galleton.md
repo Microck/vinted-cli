@@ -48,7 +48,8 @@ there (and log in again if you want the website) so the browser gets its own ses
 Commands load config and credentials without starting anything. The first request that needs
 the account takes a process lease and starts, or reuses, one engine per state directory. The
 engine binds an OS-picked loopback port and reports it; the CLI checks its API token and health
-answer before using it. Separate commands, watches and the MCP server share it. Ten seconds
+answer before using it. Separate commands, watches and the MCP server share it; `vinted mcp` and `vinted watch run`
+hold a lease for as long as they run, so the engine keeps renewing meanwhile. Ten seconds
 after the last client exits, the engine drains and stops; the next command starts it again on
 the same vault.
 
@@ -68,7 +69,8 @@ vinted auth service disable
 
 This writes a systemd user unit on Linux, a LaunchAgent on macOS, or a logon task on Windows,
 with absolute paths and the `HOME`, `XDG_*`, `VINTED_CONFIG`, `VINTED_BASE_URL`,
-`VINTED_PROXY` and `HTTP(S)_PROXY`/`NO_PROXY` of the shell that enabled it. It never contains a
+`VINTED_PROXY`, `HTTP(S)_PROXY`/`NO_PROXY`, `SSL_CERT_FILE`/`SSL_CERT_DIR` and
+`VINTED_GALLETON_*` of the shell that enabled it. It never contains a
 credential: enable refuses a proxy variable carrying one. A Windows logon task cannot carry variables; it starts with the
 saved user environment, so enable refuses when one of those variables, set in the shell or
 not, differs there (match them with `setx` first). Linux user lingering is not enabled, so this is a login service,

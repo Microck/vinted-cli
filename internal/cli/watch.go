@@ -839,13 +839,17 @@ func (a *App) serviceCommandLine(iv time.Duration) (string, []string, error) {
 // the one they installed from, checking nothing and reporting nothing, with no
 // error anywhere. HOME is in the list because it is where the paths come from
 // when the XDG variables are unset, which is the common case.
-// No credential goes in: a unit file is world-readable. The proxy variables
+// No credential goes in: a unit file is world-readable (the engine's API
+// token stays in its file; only the file's path goes in). The proxy variables
 // go in, or the timer (and the session engine it starts) would talk to Vinted
 // directly; install refuses one carrying credentials.
 var (
 	serviceEnvXDGKeys   = []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"}
 	serviceEnvProxyKeys = []string{"VINTED_PROXY", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"}
-	serviceEnvURLKeys   = append([]string{"VINTED_BASE_URL"}, serviceEnvProxyKeys...)
+	// The external session engine selection and custom CA trust are paths and
+	// URLs, not secrets; without them a background run would use another
+	// engine (a vault without the session) or fail TLS.
+	serviceEnvURLKeys = append([]string{"VINTED_BASE_URL", "VINTED_GALLETON_DIR", "VINTED_GALLETON_URL", "VINTED_GALLETON_TOKEN_FILE", "SSL_CERT_FILE", "SSL_CERT_DIR"}, serviceEnvProxyKeys...)
 )
 
 // checkServiceProxies refuses to freeze a proxy carrying credentials into a

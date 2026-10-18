@@ -34,6 +34,15 @@ Examples:
   vinted mcp                       # usually started by the harness, not by hand`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Hold a session engine lease for the server's lifetime, so the
+			// engine keeps renewing the profile's session between tool calls
+			// instead of stopping after its idle grace. A failure is only a
+			// warning: tools report engine errors themselves.
+			if a.Account != nil {
+				if _, err := a.Account.status(cmd.Context()); err != nil && cmd.Context().Err() == nil {
+					fmt.Fprintf(a.Stderr, "vinted: session engine: %v\n", err)
+				}
+			}
 			srv := &mcp.Server{Version: a.Version, Run: a.runCommand}
 			return srv.Serve(cmd.Context(), a.Stdin, a.Stdout)
 		},
