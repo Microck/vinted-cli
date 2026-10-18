@@ -114,28 +114,37 @@ func (m *managedAccount) engineError(ctx context.Context, err error) error {
 	return e
 }
 
-// pauseSessions pauses the engine's provider for this site after a block,
-// for every profile: through this invocation's lease when it has one, else
-// only if an engine is already running (one started later sees the cooldown
-// in galletonClient). Without any engine there is nothing to pause.
-func (a *App) pauseSessions(ctx context.Context, d time.Duration) error {
-	c := a.sessionClient
-	if c == nil && a.Account != nil {
-		var err error
-		if c, err = a.galletonClient(ctx); err != nil {
-			return managedError(err)
-		}
+// sessionsClient is the engine to pause or resume for the site: this
+// invocation's lease when it has one or a logged-in profile, else an engine
+// that is already running (none is started just for this). nil when none.
+func (a *App) sessionsClient(ctx context.Context) (*galleton.Client, error) {
+	if a.sessionClient != nil {
+		return a.sessionClient, nil
 	}
-	if c == nil {
-		var err error
-		if galleton.Configured() {
-			c, err = galleton.FromEnv()
-		} else {
-			c, err = galleton.IfRunning(ctx, a.sessionDir())
+	if a.Account != nil {
+		c, err := a.galletonClient(ctx)
+		if err != nil {
+			return nil, managedError(err)
 		}
-		if err != nil || c == nil {
-			return nil
+		return c, nil
+	}
+	if galleton.Configured() {
+		c, err := galleton.FromEnv()
+		if err != nil {
+			return nil, nil
 		}
+		return c, nil
+	}
+	return galleton.IfRunning(ctx, a.sessionDir())
+}
+
+// pauseSessions pauses the engine's provider for this site after a block,
+// for every profile. An engine started later sees the cooldown in
+// galletonClient; without any engine there is nothing to pause.
+func (a *App) pauseSessions(ctx context.Context, d time.Duration) error {
+	c, err := a.sessionsClient(ctx)
+	if err != nil || c == nil {
+		return err
 	}
 	if err := c.Pause(ctx, vinted.Provider(a.Client.Base), d); err != nil {
 		return managedError(err)
@@ -143,19 +152,19 @@ func (a *App) pauseSessions(ctx context.Context, d time.Duration) error {
 	return nil
 }
 
-func (m *managedAccount) UserID() int64 { return m.userID }
-
-// resume lifts the engine's pause on the account's site.
-func (m *managedAccount) resume(ctx context.Context) error {
-	c, err := m.app.galletonClient(ctx)
-	if err != nil {
-		return managedError(err)
+// resumeSessions lifts the engine's pause on this site, for every profile.
+func (a *App) resumeSessions(ctx context.Context) error {
+	c, err := a.sessionsClient(ctx)
+	if err != nil || c == nil {
+		return err
 	}
-	if err := c.Resume(ctx, m.provider); err != nil {
+	if err := c.Resume(ctx, vinted.Provider(a.Client.Base)); err != nil {
 		return managedError(err)
 	}
 	return nil
 }
+
+func (m *managedAccount) UserID() int64 { return m.userID }
 
 // status reads the daemon's view of the session without renewing it.
 func (m *managedAccount) status(ctx context.Context) (galleton.Metadata, error) {

@@ -86,11 +86,9 @@ Examples:
 				return err
 			}
 			// The block also paused the session engine's renewals and
-			// requests for the account; lift that pause as well.
-			if a.Account != nil {
-				if err := a.Account.resume(cmd.Context()); err != nil {
-					return err
-				}
+			// requests for the site; lift that pause as well.
+			if err := a.resumeSessions(cmd.Context()); err != nil {
+				return err
 			}
 			return a.Printer.Print(clearedView{Cleared: was.Blocked, Was: was})
 		},
