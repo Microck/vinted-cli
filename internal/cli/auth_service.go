@@ -63,6 +63,11 @@ paths and VINTED_PROXY of the shell that enabled it, never a credential.`,
 					// Returning an error lets an explicitly installed OS service restart.
 					return err
 				}
+				// The engine caps a pause at 24 h while a cooldown can last
+				// longer (Retry-After); keep extending it while one runs.
+				if err := a.carryCooldown(cmd.Context(), c); err != nil {
+					return err
+				}
 			}
 		}
 	}}
