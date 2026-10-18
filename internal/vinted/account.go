@@ -35,9 +35,6 @@ type Account interface {
 	// Renew renews the access token now. Requests renew on their own before
 	// expiry; this is for a 401 and for `vinted auth refresh`.
 	Renew(ctx context.Context) error
-	// Pause stops every request and renewal of the account for d after the
-	// bot protection blocked one, across every process using the session.
-	Pause(ctx context.Context, d time.Duration) error
 	// UserID is the account's id, recorded at login.
 	UserID() int64
 }

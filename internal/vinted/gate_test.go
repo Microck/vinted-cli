@@ -112,13 +112,15 @@ func TestBlockIsFinalAndRecorded(t *testing.T) {
 	}
 }
 
-// A block on an account request records the cooldown and pauses the
-// account in the session engine for as long, so it renews nothing meanwhile.
-func TestBlockPausesTheAccount(t *testing.T) {
+// A block records the cooldown and pauses the session engine for as long, so
+// it renews nothing meanwhile.
+func TestBlockPausesTheSessionEngine(t *testing.T) {
 	f, c := newFake(t)
 	g := &recordingGate{}
 	c.Gate = g
-	acct := loggedIn(c)
+	loggedIn(c)
+	var pauses []time.Duration
+	c.PauseSessions = func(_ context.Context, d time.Duration) error { pauses = append(pauses, d); return nil }
 	f.override["GET /api/v2/users/current"] = func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`<html><script src="https://ct.captcha-delivery.com/c.js"></script></html>`))
@@ -129,8 +131,8 @@ func TestBlockPausesTheAccount(t *testing.T) {
 	if f.count("GET /api/v2/users/current") != 1 || len(g.blocks) != 1 {
 		t.Fatalf("hits %d, blocks %v", f.count("GET /api/v2/users/current"), g.blocks)
 	}
-	if len(acct.pauses) != 1 || acct.pauses[0] != 6*time.Hour {
-		t.Fatalf("account pauses %v, want one of 6h", acct.pauses)
+	if len(pauses) != 1 || pauses[0] != 6*time.Hour {
+		t.Fatalf("engine pauses %v, want one of 6h", pauses)
 	}
 }
 

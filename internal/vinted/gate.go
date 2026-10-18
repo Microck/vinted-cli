@@ -124,8 +124,8 @@ func (c *Client) blocked(ctx context.Context, endpoint string, resp response) er
 	}
 	// The session engine renews on its own schedule, outside the gate: pause
 	// it too, so no renewal goes out while the site is blocking us.
-	if c.Account != nil && wait > 0 {
-		if err := c.Account.Pause(ctx, wait); err != nil {
+	if c.PauseSessions != nil && wait > 0 {
+		if err := c.PauseSessions(ctx, wait); err != nil {
 			e.Msg += fmt.Sprintf(" (the session engine could not be paused: %v)", err)
 		}
 	}

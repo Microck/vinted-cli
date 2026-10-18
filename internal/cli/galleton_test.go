@@ -151,3 +151,17 @@ func TestBlockedEngineRenewalStartsTheCooldown(t *testing.T) {
 		t.Fatal("the engine was not paused after its renewal was blocked")
 	}
 }
+
+// A block seen by a logged-out profile still pauses the running engine,
+// which renews another profile's session for the same site.
+func TestGuestBlockPausesARunningEngine(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.fake.setBlock("/catalog", datadomeBlock(t))
+	if r := h.run("", "search", "nike", "--profile", "guest"); r.code != 5 {
+		t.Fatalf("blocked guest search: exit %d\n%s", r.code, r.stderr)
+	}
+	if until := h.pausedUntil(); until == nil {
+		t.Fatal("a guest block left the running engine renewing")
+	}
+}

@@ -241,6 +241,7 @@ func (a *App) useSite(base string) {
 	}
 	a.Gate = throttle.New(a.Paths.StateDir, base, throttle.Options{Interval: gap, Clock: throttleClock, Err: err})
 	a.Client.Gate, a.Client.Tokens = a.Gate, a.Gate
+	a.Client.PauseSessions = a.pauseSessions
 }
 
 // applyProxy routes all Vinted traffic through VINTED_PROXY, else config's

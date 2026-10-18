@@ -106,7 +106,7 @@ func (m *managedAccount) engineError(ctx context.Context, err error) error {
 		e.Msg += fmt.Sprintf(" (the cooldown could not be saved: %v)", berr)
 	}
 	if wait > 0 {
-		if perr := m.Pause(ctx, wait); perr != nil {
+		if perr := m.app.pauseSessions(ctx, wait); perr != nil {
 			e.Msg += fmt.Sprintf(" (the session engine could not be paused: %v)", perr)
 		}
 	}
@@ -114,12 +114,30 @@ func (m *managedAccount) engineError(ctx context.Context, err error) error {
 	return e
 }
 
-func (m *managedAccount) Pause(ctx context.Context, d time.Duration) error {
-	c, err := m.app.galletonClient(ctx)
-	if err != nil {
-		return managedError(err)
+// pauseSessions pauses the engine's provider for this site after a block,
+// for every profile: through this invocation's lease when it has one, else
+// only if an engine is already running (one started later sees the cooldown
+// in galletonClient). Without any engine there is nothing to pause.
+func (a *App) pauseSessions(ctx context.Context, d time.Duration) error {
+	c := a.sessionClient
+	if c == nil && a.Account != nil {
+		var err error
+		if c, err = a.galletonClient(ctx); err != nil {
+			return managedError(err)
+		}
 	}
-	if err := c.Pause(ctx, m.provider, d); err != nil {
+	if c == nil {
+		var err error
+		if galleton.Configured() {
+			c, err = galleton.FromEnv()
+		} else {
+			c, err = galleton.IfRunning(ctx, a.sessionDir())
+		}
+		if err != nil || c == nil {
+			return nil
+		}
+	}
+	if err := c.Pause(ctx, vinted.Provider(a.Client.Base), d); err != nil {
 		return managedError(err)
 	}
 	return nil
@@ -265,6 +283,7 @@ func (a *App) galletonClient(ctx context.Context) (*galleton.Client, error) {
 			return nil, err
 		}
 		a.sessionClient = c
+		a.carryCooldown(ctx, c)
 		return c, nil
 	}
 	setup, err := a.engineSetup()
@@ -276,7 +295,22 @@ func (a *App) galletonClient(ctx context.Context) (*galleton.Client, error) {
 		return nil, err
 	}
 	a.sessionClient = c
+	a.carryCooldown(ctx, c)
 	return c, nil
+}
+
+// carryCooldown pauses a freshly attached engine for the rest of a cooldown
+// the site is in, in case the block was seen while no engine ran.
+func (a *App) carryCooldown(ctx context.Context, c *galleton.Client) {
+	st, err := a.Gate.Status()
+	if err != nil || !st.Blocked || st.BlockedUntil == nil {
+		return
+	}
+	if d := time.Until(*st.BlockedUntil); d > 0 {
+		if err := c.Pause(ctx, vinted.Provider(a.Client.Base), d); err != nil {
+			fmt.Fprintf(a.Stderr, "vinted: could not pause the session engine for the cooldown: %v\n", managedError(err))
+		}
+	}
 }
 
 // forgetManagedProfile deletes a profile's daemon session before its local

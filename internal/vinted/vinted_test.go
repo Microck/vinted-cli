@@ -120,12 +120,11 @@ func jsonString(n int64) string {
 }
 
 // testAccount stands in for the session engine: it attaches a fixed cookie
-// jar, never rotates it, and records renewals and pauses.
+// jar, never rotates it, and records renewals.
 type testAccount struct {
 	mu     sync.Mutex
 	cookie string
 	renews int
-	pauses []time.Duration
 	renew  func() error
 }
 
@@ -157,13 +156,6 @@ func (a *testAccount) Renew(context.Context) error {
 	if renew != nil {
 		return renew()
 	}
-	return nil
-}
-
-func (a *testAccount) Pause(_ context.Context, d time.Duration) error {
-	a.mu.Lock()
-	a.pauses = append(a.pauses, d)
-	a.mu.Unlock()
 	return nil
 }
 

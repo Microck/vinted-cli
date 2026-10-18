@@ -443,6 +443,16 @@ func activeLeases(dir string) (bool, error) {
 	return active, nil
 }
 
+// IfRunning connects to an already running bundled daemon without taking a
+// lease or starting one; nil when none runs. For short calls such as a pause.
+func IfRunning(ctx context.Context, dir string) (*Client, error) {
+	c, err := running(ctx, dir, "")
+	if err != nil {
+		return nil, nil
+	}
+	return c, nil
+}
+
 // RuntimeStatus is metadata only: checking it does not start a daemon.
 func RuntimeStatus(ctx context.Context, dir string) map[string]any {
 	if Configured() {

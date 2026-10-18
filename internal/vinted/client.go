@@ -41,6 +41,10 @@ type Client struct {
 	// Tokens caches the CSRF token and guest jar across processes; nil keeps
 	// them for this process only.
 	Tokens TokenCache
+	// PauseSessions, when set, stops the session engine's requests and
+	// renewals for the site for d after a block, whether or not this client
+	// is logged in: another profile's session renews from the same egress.
+	PauseSessions func(ctx context.Context, d time.Duration) error
 
 	mu            sync.Mutex
 	redactStrings []string
