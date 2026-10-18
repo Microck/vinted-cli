@@ -28,7 +28,7 @@ vinted auth status --check
 vinted auth refresh
 ```
 
-The export must contain `refresh_token_web` (Netscape, Cookie-Editor/DevTools/Playwright JSON, or a Cookie header; a whole-browser export is fine). The cookies go into the bundled Galleton session engine's encrypted vault, never into the CLI or `credentials.toml`; the engine renews the access token itself and is the only party that spends the single-use refresh token. `vinted auth status` is offline; `--check` asks the engine and Vinted. A refused renewal is exit 3: export the cookies again. A profile saved by an older version reports `needs_login`. `vinted auth service enable` keeps the engine renewing between commands; leave that to the user. Profiles: `--profile NAME` or `VINTED_PROFILE`. Never print, log or read cookie values or the `galleton/` directory.
+The export must contain `refresh_token_web` (Netscape, Cookie-Editor/DevTools/Playwright JSON, or a Cookie header; a whole-browser export is fine). `auth login` hands the cookies to the bundled Galleton session engine's encrypted vault, never to `credentials.toml`, and the CLI does not keep them; the engine renews the access token itself and is the only party that spends the single-use refresh token. `vinted auth status` is offline; `--check` asks the engine and Vinted. A refused renewal is exit 3: export the cookies again. A profile saved by an older version reports `needs_login`. `vinted auth service enable` keeps the engine renewing between commands; leave that to the user. Profiles: `--profile NAME` or `VINTED_PROFILE`. Never print, log or read cookie values or the `galleton/` directory.
 
 ## Search
 

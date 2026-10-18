@@ -247,3 +247,28 @@ func TestSourceBuildPreparesPinnedEngine(t *testing.T) {
 		t.Fatalf("cache reuse: %s %v", cached, err)
 	}
 }
+
+// A host that is draining releases startup.lock before host.lock. An Open
+// that slips into that window must launch the replacement once host.lock
+// frees up, not wait out its deadline against a missing endpoint.
+func TestBundledOpenLaunchesAfterADrainingHostExits(t *testing.T) {
+	dir := bundledRuntime(t)
+	if err := privateDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	draining, err := filelock.Acquire(context.Background(), filepath.Join(dir, "host.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		filelock.Release(draining)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	c, err := Open(ctx, dir, testSetup)
+	if err != nil {
+		t.Fatal("did not take over after the draining host exited:", err)
+	}
+	c.Close()
+}

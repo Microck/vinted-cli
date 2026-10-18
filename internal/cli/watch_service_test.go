@@ -259,8 +259,10 @@ func TestServiceEnvCarriesTheProxyVariables(t *testing.T) {
 	if err := checkServiceProxies(); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HTTPS_PROXY", "http://alice:secret@proxy.lan:3128")
-	if err := checkServiceProxies(); err == nil || strings.Contains(err.Error(), "secret") {
-		t.Fatalf("credentialed HTTPS_PROXY accepted or echoed: %v", err)
+	for _, v := range []string{"http://alice:secret@proxy.lan:3128", "alice:secret@proxy.lan:3128", "ftp://alice:secret@proxy.lan"} {
+		t.Setenv("HTTPS_PROXY", v)
+		if err := checkServiceProxies(); err == nil || strings.Contains(err.Error(), "secret") {
+			t.Fatalf("credentialed HTTPS_PROXY %q accepted or echoed: %v", v, err)
+		}
 	}
 }

@@ -80,7 +80,8 @@ rather than three commands later.
 ## Staying logged in
 
 The cookies live in the bundled [Galleton](https://github.com/Microck/galleton) session
-engine, an encrypted vault next to `credentials.toml`, never in the CLI itself. The engine
+engine, an encrypted vault next to `credentials.toml`; after the import the CLI itself never
+holds them. The engine
 renews the access token through Vinted's refresh endpoint five minutes before it expires,
 keeps the cookies Vinted sends back, and is the only party that ever spends the single-use
 refresh token. Every logged-in request goes through it.
@@ -144,8 +145,8 @@ vinted search "levis 501" --profile alt
 account id and the login. The cookies are in the encrypted vault under `galleton/` (directory
 `0700`, files `0600`). Its API token and key administer the whole vault, and encryption does
 not protect against other programs running as you, so treat the directory like a password:
-never share, commit or publicly back it up. No account cookie reaches the CLI process, so none
-can show up in a log line, `--debug` output or an error.
+never share, commit or publicly back it up. Login reads the export you hand it and passes it on; after that no account cookie reaches the
+CLI process, and the values login handled are redacted from its output.
 
 ## Log out
 

@@ -131,7 +131,7 @@ the binary (ADR 0002, `docs/galleton.md`). It renews the access token five minut
 set the two tokens, and relays every logged-in request with the cookies attached. A 401
 asks it to renew once and retries. Requests pass the CLI's gate first; a block also pauses the
 engine's provider for the cooldown. The account id is recorded at login. No password ever
-touches the CLI, and no cookie ever enters its process.
+touches the CLI, and after the import no cookie enters its process.
 
 ### profile
 

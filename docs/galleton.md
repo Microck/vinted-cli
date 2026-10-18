@@ -10,8 +10,9 @@ vinted me show
 Release binaries contain a pinned [Galleton](https://github.com/Microck/galleton) daemon
 (v0.1.0) for their OS and architecture. It holds the account's cookies in an encrypted vault,
 renews the access token through Vinted's refresh endpoint, keeps the cookies every response
-sets, and sends every account request with them attached. The CLI process never holds an
-account cookie, so no two processes can ever spend the same single-use `refresh_token_web`.
+sets, and sends every account request with them attached. Apart from reading the export during
+`vinted auth login`, the CLI never holds an account cookie, and it never sees a renewed one, so no
+two processes can ever spend the same single-use `refresh_token_web`.
 No separate installation, configuration file, port or environment variable is needed. The
 design record is [ADR 0002](adr/0002-cli-managed-galleton.md).
 

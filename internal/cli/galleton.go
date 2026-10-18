@@ -24,7 +24,7 @@ import (
 // managedAccount is the logged-in profile as a vinted.Account. Every request
 // carrying the account's cookies goes through the Galleton daemon: it
 // attaches the cookies, renews them through Vinted's refresh endpoint, and
-// keeps whatever each response sets. The CLI never holds a cookie, so two
+// keeps whatever each response sets. After login the CLI never holds a cookie, so two
 // processes can never spend the same single-use refresh token.
 type managedAccount struct {
 	mu       sync.Mutex
@@ -300,6 +300,13 @@ func envProxy(origins []string) (string, error) {
 func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, domain string) error {
 	base := a.Client.Base
 	cookies := export.For(base)
+	// The export passes through this process once; keep its secrets out of
+	// --debug output and error bodies (short values are flags, not secrets).
+	for _, c := range export.Cookies {
+		if len(c.Value) >= 16 {
+			a.Client.Redact(c.Value)
+		}
+	}
 	if !hasCookie(cookies, vinted.RefreshCookie) {
 		return output.Usagef("the export has no %s for %s; export the cookies of a logged-in tab of that site, or pass --domain", vinted.RefreshCookie, siteHostname(base))
 	}

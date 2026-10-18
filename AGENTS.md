@@ -60,7 +60,7 @@ The imported browser cookies that let the CLI act as a Profile's account: `acces
 _Avoid_: Credentials, login
 
 **Session engine**:
-The pinned Galleton daemon bundled in the binary (`internal/galleton`, `docs/galleton.md`). It keeps every Session in an encrypted vault, renews it, and sends every logged-in request with its cookies. The CLI process never holds an account cookie.
+The pinned Galleton daemon bundled in the binary (`internal/galleton`, `docs/galleton.md`). It keeps every Session in an encrypted vault, renews it, and sends every logged-in request with its cookies. After `auth login` hands the export over, the CLI process never holds an account cookie.
 _Avoid_: Daemon (fine in code), vault, token store
 
 **Access token**:

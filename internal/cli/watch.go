@@ -856,10 +856,18 @@ func checkServiceProxies() error {
 		if raw == "" || strings.HasPrefix(strings.ToLower(k), "no_proxy") {
 			continue
 		}
+		if k != "VINTED_PROXY" && !strings.Contains(raw, "://") {
+			// Go reads a scheme-less HTTPS_PROXY as http://.
+			raw = "http://" + raw
+		}
 		u, err := vinted.ParseProxy(raw)
 		if err != nil {
 			if k == "VINTED_PROXY" {
 				return output.Usagef("VINTED_PROXY: %v", err)
+			}
+			// Unusable for the CLI, but it still lands in the unit as it is.
+			if strings.Contains(raw, "@") {
+				return output.Usagef("%s looks like it carries credentials, which would land in a world-readable unit file. Use a proxy without credentials (for example a local socks5h forwarder) for scheduled and background runs", k)
 			}
 			continue
 		}

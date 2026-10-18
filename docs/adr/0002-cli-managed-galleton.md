@@ -29,7 +29,7 @@ The CLI uses a pinned Galleton daemon as its session engine, the same way wallap
   process of a state directory; it stops ten seconds after the last one exits, unless
   `vinted auth service enable` keeps it running.
 - `credentials.toml` holds only a session ID per profile, plus the account's id and login.
-  No cookie ever enters the CLI process: `auth login` parses the export with Galleton's
+  After login the CLI process holds no cookie: `auth login` parses the export with Galleton's
   `cookiefile` package, narrows it to the site's origins and imports it; every account
   request then goes through the daemon's managed request API. Guest (logged-out) reads keep
   using an anonymous jar minted from the home page, which spends no refresh token.
@@ -56,7 +56,7 @@ browser session.
 ## Consequences
 
 - Exactly one party spends the refresh token. The CLI cannot replay a spent one, because it
-  never holds one.
+  never holds a renewed one.
 - Release binaries are larger, and the engine is built and tested for every release target.
 - Renewal happens while some vinted process runs, or all the time with the optional service.
   Nothing renews while the machine is off.
@@ -64,4 +64,5 @@ browser session.
   require a new login. The daemon reports that as `renewal_uncertain` instead of guessing.
 - After an import the daemon renews right away, so the browser the cookies came from holds a
   spent refresh token. Logging out there and back in gives it a separate session.
-- `--debug` output and errors cannot contain an account cookie: none reaches the process.
+- Only `auth login` handles cookie values in the CLI (it registers them for redaction); every
+  later command, and its `--debug` output and errors, works without any.

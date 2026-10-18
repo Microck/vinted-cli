@@ -102,7 +102,7 @@ vinted auth login --cookies cookies.txt --domain vinted.fr
 cat cookies.txt | vinted auth login --cookies-stdin
 ```
 
-the cli needs `refresh_token_web` from the export (and normally `access_token_web` with it). the cookies go into the bundled [galleton](https://github.com/Microck/galleton) session engine, an encrypted vault next to `credentials.toml`, and never into the cli itself. the engine renews the access token through vinted's own refresh endpoint before it expires, keeps the rotated cookies, and is the only thing that ever spends the single-use refresh token. after importing, log out of that browser session (or just log in again there): the browser still holds the refresh token the engine spends. vinted can still expire or revoke a session, so you may need to log in again.
+the cli needs `refresh_token_web` from the export (and normally `access_token_web` with it). `auth login` reads the export and hands it to the bundled [galleton](https://github.com/Microck/galleton) session engine, an encrypted vault next to `credentials.toml`; after that the cli never holds the cookies again. the engine renews the access token through vinted's own refresh endpoint before it expires, keeps the rotated cookies, and is the only thing that ever spends the single-use refresh token. after importing, log out of that browser session (or just log in again there): the browser still holds the refresh token the engine spends. vinted can still expire or revoke a session, so you may need to log in again.
 
 check session status or refresh by hand:
 

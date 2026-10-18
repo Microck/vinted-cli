@@ -115,54 +115,72 @@ func Open(ctx context.Context, dir string, setup Setup) (*Client, error) {
 	if !free && (errors.Is(connectErr, errHostVersionMismatch) || errors.Is(connectErr, errHostConfigMismatch)) {
 		return nil, connectErr
 	}
-	if free {
-		filelock.Release(host)
+	launch := func() error {
 		// Prepare before launching so source-build errors are returned to the user.
 		if _, err := engineBinary(ctx, dir); err != nil {
-			return nil, err
+			return err
 		}
 		// No host is running, so nothing reads the adapter now. Proxy, pacing
 		// and size changes keep imported sessions; a changed site definition
 		// makes the daemon refuse that site's sessions until reimported.
 		if err := atomicFile(filepath.Join(dir, "adapters.json"), setup.Adapter, 0600); err != nil {
-			return nil, err
+			return err
 		}
 		exe, err := os.Executable()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		exe, err = filepath.EvalSymlinks(exe)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		cmd := exec.Command(exe, hostCommand, dir)
 		cmd.Env = withProxy(cleanEnv(), setup.Proxy)
 		detach(cmd)
 		// Never inherit terminal pipes: the short-lived CLI must be free to exit.
 		if err := cmd.Start(); err != nil {
-			return nil, errors.New("could not start the bundled session host")
+			return errors.New("could not start the bundled session host")
 		}
 		go func() { _ = cmd.Wait() }()
+		return nil
 	}
-	deadline := time.NewTimer(20 * time.Second)
+	if free {
+		filelock.Release(host)
+		if err := launch(); err != nil {
+			return nil, err
+		}
+	}
+	// Generous: a loaded machine can take a while to extract and start the
+	// engine, and a failure here is only a slower error message.
+	deadline := time.NewTimer(45 * time.Second)
 	defer deadline.Stop()
 	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		if c, err := connect(); err == nil {
+		c, err := connect()
+		if err == nil {
 			return c, nil
-		} else if !free && (errors.Is(err, errHostVersionMismatch) || errors.Is(err, errHostConfigMismatch)) {
-			// A host that was still starting may have only just published its
-			// endpoint. Confirm it is alive before reporting the version conflict.
-			// Ignore stale endpoints when we launched the replacement ourselves.
+		}
+		if !free {
+			// The host seen at the first check may have been draining: it
+			// removes its endpoint and releases startup.lock before host.lock.
+			// Once host.lock frees up, launch the replacement ourselves. While
+			// it is held, a host that was still starting may have only just
+			// published its endpoint, so a version or setup conflict is final.
 			host, unlocked, lockErr := filelock.Try(filepath.Join(dir, "host.lock"))
 			if lockErr != nil {
 				return nil, lockErr
 			}
-			if !unlocked {
+			if !unlocked && (errors.Is(err, errHostVersionMismatch) || errors.Is(err, errHostConfigMismatch)) {
 				return nil, err
 			}
-			filelock.Release(host)
+			if unlocked {
+				filelock.Release(host)
+				free = true
+				if err := launch(); err != nil {
+					return nil, err
+				}
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -356,7 +374,7 @@ func RunHost(dir string) error {
 	case <-ctx.Done():
 		_ = cmd.Process.Kill()
 		return ctx.Err()
-	case <-time.After(15 * time.Second):
+	case <-time.After(40 * time.Second):
 		_ = cmd.Process.Kill()
 		return errors.New("session engine startup timed out")
 	}

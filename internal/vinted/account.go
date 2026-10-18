@@ -22,7 +22,8 @@ const (
 	RefreshCookie = "refresh_token_web"
 )
 
-// Account is the logged-in session. Its cookies never enter this process:
+// Account is the logged-in session. Its cookies stay out of this process
+// (login only reads the export and hands it over):
 // the CLI implements Account with the Galleton session engine, the only
 // party that holds the cookies, renews the access token through
 // RefreshPath, and keeps whatever Vinted sets in return. One owner means a
