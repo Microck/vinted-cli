@@ -322,16 +322,25 @@ func (a *App) galletonClient(ctx context.Context) (*galleton.Client, error) {
 // the site is in, in case the block was seen while no engine ran. It fails
 // closed: an unreadable cooldown or a failed pause keeps the engine unused.
 func (a *App) carryCooldown(ctx context.Context, c *galleton.Client) error {
-	st, err := a.Gate.Status()
+	// Every site's cooldown, not only this profile's: the engine renews the
+	// sessions of all profiles.
+	blocked, err := a.Gate.Cooldowns()
 	if err != nil {
 		return err
 	}
-	if !st.Blocked || st.BlockedUntil == nil {
-		return nil
+	current := ""
+	if u, err := url.Parse(a.Client.Base); err == nil {
+		current = u.Host
 	}
-	if d := time.Until(*st.BlockedUntil); d > 0 {
-		if err := c.Pause(ctx, vinted.Provider(a.Client.Base), d); err != nil {
-			return fmt.Errorf("could not pause the session engine for the cooldown: %w", managedError(err))
+	for host, until := range blocked {
+		base := "https://" + host
+		if host == current {
+			base = a.Client.Base
+		}
+		if d := time.Until(until); d > 0 {
+			if err := c.Pause(ctx, vinted.Provider(base), d); err != nil {
+				return fmt.Errorf("could not pause the session engine for the cooldown on %s: %w", host, managedError(err))
+			}
 		}
 	}
 	return nil
