@@ -262,6 +262,9 @@ func TestWatchKeepaliveReportsAnEngineRenewalBlock(t *testing.T) {
 	if cd := decode[map[string]any](t, h.must("", "cooldown").stdout); cd["blocked"] != true {
 		t.Fatalf("watch check did not record the engine's renewal block: %v", cd)
 	}
+	if until := h.pausedUntil(); until == nil {
+		t.Fatal("watch check recorded the block but left the engine unpaused")
+	}
 }
 
 // A running MCP server reports a renewal block the engine hit on its own
