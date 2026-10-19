@@ -417,8 +417,8 @@ func TestReadCookieExport(t *testing.T) {
 		if export.Site != wantSite || values[RefreshCookie] != "fake-refresh-token" || values["datadome"] != "fake-datadome" || values[AccessCookie] == "" {
 			t.Fatalf("%s: site=%q cookies=%v", name, export.Site, values)
 		}
-		if export.AccessExpires.Year() != 2100 {
-			t.Fatalf("%s: access expiry %v", name, export.AccessExpires)
+		if exp := AccessExpiry(export.Cookies); exp.Year() != 2100 {
+			t.Fatalf("%s: access expiry %v", name, exp)
 		}
 	}
 	// Cookie-Editor's wrapper: the site comes from the token cookies' domain.
@@ -441,6 +441,20 @@ func TestReadCookieExport(t *testing.T) {
 	}
 	if got := export.For("https://www.vinted.fr"); len(got) != 0 {
 		t.Fatalf("www.vinted.com cookies offered to www.vinted.fr: %v", got)
+	}
+	// A whole-browser export with logins on two sites names no site, and
+	// each site's cookies carry that site's own access token expiry.
+	two := `[` +
+		`{"domain":".www.vinted.fr","name":"access_token_web","value":"` + testJWT(3000000001, time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)) + `"},` +
+		`{"domain":".www.vinted.fr","name":"refresh_token_web","value":"synthetic-refresh-fr"},` +
+		`{"domain":".www.vinted.es","name":"access_token_web","value":"` + testJWT(3000000002, time.Date(2090, 1, 1, 0, 0, 0, 0, time.UTC)) + `"},` +
+		`{"domain":".www.vinted.es","name":"refresh_token_web","value":"synthetic-refresh-es"}]`
+	export, err = ReadCookieExport(strings.NewReader(two))
+	if err != nil || export.Site != "" || !slices.Equal(export.Sites, []string{"www.vinted.es", "www.vinted.fr"}) {
+		t.Fatalf("two-site export: site=%q sites=%v err=%v", export.Site, export.Sites, err)
+	}
+	if fr, es := AccessExpiry(export.For("https://www.vinted.fr")), AccessExpiry(export.For("https://www.vinted.es")); fr.Year() != 2100 || es.Year() != 2090 {
+		t.Fatalf("expiries fr=%v es=%v", fr, es)
 	}
 	if _, err := ReadCookieExport(strings.NewReader("foo=bar; baz=qux")); err == nil {
 		t.Fatal("expected an error without vinted tokens")

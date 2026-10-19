@@ -364,6 +364,11 @@ func TestLoginInputErrorsAreUsageErrors(t *testing.T) {
 	if r := h.run("foo=bar; baz=qux", "auth", "login", "--cookies-stdin"); r.code != 2 || !strings.Contains(r.stderr, "refresh_token_web") {
 		t.Fatalf("cookies without tokens: exit %d %q", r.code, r.stderr)
 	}
+	// Logins for two sites in one export: the profile's site must be named.
+	two := `[{"domain":".www.vinted.fr","name":"refresh_token_web","value":"synthetic-fr"},{"domain":".www.vinted.es","name":"refresh_token_web","value":"synthetic-es"}]`
+	if r := h.run(two, "auth", "login", "--cookies-stdin"); r.code != 2 || !strings.Contains(r.stderr, "--domain") {
+		t.Fatalf("two-site export: exit %d %q", r.code, r.stderr)
+	}
 }
 
 func TestStatusRefreshAndLogout(t *testing.T) {

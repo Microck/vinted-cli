@@ -507,6 +507,8 @@ service units pass a tenth of their interval.`,
 			events, err := a.runChecks(cmd.Context(), st, ws)
 			if !stopsRun(err) {
 				a.keepSessionAlive(cmd.Context())
+			} else {
+				a.reportEngineBlocks(cmd.Context())
 			}
 			if events == nil {
 				events = []store.Event{}
@@ -541,8 +543,17 @@ func (a *App) keepSessionAlive(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	// A renewal the engine ran on its own may have been blocked; no command
-	// saw it, so start the shared cooldown here.
+	a.reportEngineBlocks(ctx)
+}
+
+// reportEngineBlocks starts the shared cooldown for a renewal the engine ran
+// on its own and the bot protection blocked: no command saw that block. It
+// runs after a stopped check too, whose blocked request may be the engine
+// refusing to send while it backs off.
+func (a *App) reportEngineBlocks(ctx context.Context) {
+	if a.Account == nil {
+		return
+	}
 	if c, err := a.galletonClient(ctx); err == nil {
 		if err := a.recordEngineBlocks(ctx, c, map[string]time.Time{}); err != nil && ctx.Err() == nil {
 			fmt.Fprintf(a.Stderr, "vinted: could not check the session engine for blocked renewals: %v\n", err)
@@ -581,6 +592,7 @@ Vinted's bot protection ends the loop with exit 5.`,
 					return nil
 				}
 				if stopsRun(err) {
+					a.reportEngineBlocks(ctx)
 					return err
 				}
 				a.keepSessionAlive(ctx)

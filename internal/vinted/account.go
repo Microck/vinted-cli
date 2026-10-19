@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -43,10 +44,22 @@ type Account interface {
 type CookieExport struct {
 	Cookies []cookiefile.Cookie
 	// Site is the Vinted site the tokens were issued for (www.vinted.fr),
-	// empty when the export does not say (a bare Cookie header).
+	// empty when the export does not say (a bare Cookie header) or holds
+	// logins for several sites (see Sites).
 	Site string
-	// AccessExpires is the exported access token's expiry, zero when unknown.
-	AccessExpires time.Time
+	// Sites are all the Vinted sites the export holds a login for.
+	Sites []string
+}
+
+// AccessExpiry is the expiry of the access token among cookies (one site's,
+// from For), zero when unknown.
+func AccessExpiry(cookies []cookiefile.Cookie) time.Time {
+	for _, c := range cookies {
+		if c.Name == AccessCookie && c.Value != "" {
+			return jwtExpiry(c.Value)
+		}
+	}
+	return time.Time{}
 }
 
 // ReadCookieExport reads cookies exported from a logged-in browser tab with
@@ -64,27 +77,28 @@ func ReadCookieExport(r io.Reader, extraHosts ...string) (CookieExport, error) {
 		return CookieExport{}, err
 	}
 	out := CookieExport{Cookies: cookies}
-	var access, refresh *cookiefile.Cookie
-	for i := range cookies {
-		switch cookies[i].Name {
-		case AccessCookie:
-			access = &cookies[i]
-		case RefreshCookie:
-			refresh = &cookies[i]
-		}
-	}
-	if refresh == nil {
-		return CookieExport{}, errors.New("no " + RefreshCookie + " cookie found in the input; export all cookies of a logged-in vinted tab (the cookie is HttpOnly, so copy it with a cookie extension, not from the console)")
-	}
-	for _, c := range []*cookiefile.Cookie{refresh, access} {
-		if c != nil && c.Domain != "" && out.Site == "" {
-			if site := normalizeSite(c.Domain); isVintedHost(strings.TrimPrefix(site, "www.")) {
-				out.Site = site
+	// The site comes from the refresh tokens, else from the access tokens:
+	// a whole-browser export can hold logins for several sites, and their
+	// tokens must not be mixed.
+	for _, name := range []string{RefreshCookie, AccessCookie} {
+		for _, c := range cookies {
+			if c.Name != name || c.Domain == "" {
+				continue
+			}
+			if site := normalizeSite(c.Domain); isVintedHost(strings.TrimPrefix(site, "www.")) && !slices.Contains(out.Sites, site) {
+				out.Sites = append(out.Sites, site)
 			}
 		}
+		if len(out.Sites) > 0 {
+			break
+		}
 	}
-	if access != nil {
-		out.AccessExpires = jwtExpiry(access.Value)
+	if !slices.ContainsFunc(cookies, func(c cookiefile.Cookie) bool { return c.Name == RefreshCookie }) {
+		return CookieExport{}, errors.New("no " + RefreshCookie + " cookie found in the input; export all cookies of a logged-in vinted tab (the cookie is HttpOnly, so copy it with a cookie extension, not from the console)")
+	}
+	slices.Sort(out.Sites)
+	if len(out.Sites) == 1 {
+		out.Site = out.Sites[0]
 	}
 	return out, nil
 }

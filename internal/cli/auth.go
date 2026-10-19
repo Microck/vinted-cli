@@ -104,6 +104,9 @@ Examples:
 				return output.Usagef("%v", err)
 			}
 			if domain == "" {
+				if len(export.Sites) > 1 {
+					return output.Usagef("the export holds logins for several vinted sites (%s); pass --domain with the one this profile is for", strings.Join(export.Sites, ", "))
+				}
 				domain = export.Site
 			}
 			domain = vinted.NormalizeSite(domain)

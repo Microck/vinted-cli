@@ -501,8 +501,10 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 		return managedError(err)
 	}
 	in := galleton.Credentials{Provider: provider, CookieOrigin: base, Cookies: cookies}
-	if !export.AccessExpires.IsZero() {
-		exp := export.AccessExpires.UTC()
+	// The expiry of this site's own access token: an export can carry
+	// another site's login too.
+	if exp := vinted.AccessExpiry(cookies); !exp.IsZero() {
+		exp = exp.UTC()
 		in.AccessExpiresAt = &exp
 	}
 	// The daemon renews an imported session right away. That renewal is a
