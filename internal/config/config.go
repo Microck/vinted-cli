@@ -132,6 +132,13 @@ type Session struct {
 	UserID    int64     `toml:"user_id" json:"user_id"`
 	Login     string    `toml:"login" json:"login"`
 	UpdatedAt time.Time `toml:"updated_at" json:"updated_at"`
+	// RefreshExpires is when the imported refresh_token_web cookie expires,
+	// as of the login (zero when the export does not say). Not a secret.
+	RefreshExpires time.Time `toml:"refresh_expires,omitempty" json:"refresh_expires,omitempty"`
+	// RefreshIssued is when the refresh token RefreshExpires belongs to was
+	// recorded: the login, then the engine's last renewal seen. Each renewal
+	// issues a new token assumed to live as long, so RefreshExpires moves.
+	RefreshIssued time.Time `toml:"refresh_issued,omitempty" json:"-"`
 	// Legacy marks a profile still holding the cookie jar an older
 	// vinted-cli kept in this file. It is never used: the profile needs
 	// `vinted auth login`, and the next write of the file drops the cookies.

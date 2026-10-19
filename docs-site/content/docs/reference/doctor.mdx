@@ -22,6 +22,8 @@ Run these checks, in order, and print one line each:
   site reachable  the profile's Vinted site answers (one request)
   session         the profile's session works and names the account (one request)
   schedule        the state of the watch timer (systemd on Linux, launchd on macOS)
+  renewal         a warning, not a failure, when the login's refresh token
+                  expires within 48 h and no background renewal is installed
 
 The proxy check sends nothing; an unusable proxy shows up as a failed site
 check. While a cooldown lasts the site and session checks are skipped (they

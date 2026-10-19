@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Microck/galleton/cookiefile"
 )
 
 func fixture(t *testing.T, name string) []byte {
@@ -829,5 +831,23 @@ func TestAdapterCoversEverySiteWithItsGateway(t *testing.T) {
 	}
 	if n := len(AllOrigins(DefaultBase)); n != 2*len(doc.Providers) {
 		t.Fatalf("AllOrigins has %d origins for %d providers", n, len(doc.Providers))
+	}
+}
+
+func TestRefreshLifetimeReadsTheTokenClaimsAndCookieExpiry(t *testing.T) {
+	enc := base64.RawURLEncoding
+	tok := enc.EncodeToString([]byte(`{"alg":"none"}`)) + "." + enc.EncodeToString([]byte(`{"iat":1000,"exp":605800}`)) + ".sig"
+	issued, expires := RefreshLifetime([]cookiefile.Cookie{{Name: RefreshCookie, Value: tok}})
+	if issued.Unix() != 1000 || expires.Unix() != 605800 {
+		t.Fatalf("jwt claims: %v %v", issued, expires)
+	}
+	cookie := time.Unix(700000, 0)
+	issued, expires = RefreshLifetime([]cookiefile.Cookie{{Name: RefreshCookie, Value: tok, Expires: &cookie}})
+	if issued.Unix() != 1000 || !expires.Equal(cookie) {
+		t.Fatalf("cookie expiry wins: %v %v", issued, expires)
+	}
+	issued, expires = RefreshLifetime([]cookiefile.Cookie{{Name: RefreshCookie, Value: "opaque"}})
+	if !issued.IsZero() || !expires.IsZero() {
+		t.Fatalf("opaque token: %v %v", issued, expires)
 	}
 }

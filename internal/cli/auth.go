@@ -27,7 +27,7 @@ func (a *App) authCmd() *cobra.Command {
 
 func (a *App) authLoginCmd() *cobra.Command {
 	var cookiesFile, domain string
-	var cookiesStdin bool
+	var cookiesStdin, withService, noService bool
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Import a browser session for the active profile",
@@ -55,14 +55,23 @@ you need the website): the browser still holds the refresh token the engine
 spends. The site comes from the cookies' domain unless --domain is given.
 Google, Apple and Facebook accounts work the same way.
 
+In a terminal, a successful login then asks whether to keep it alive in the
+background, which is the same as running "vinted auth service enable".
+--service answers yes and --no-service answers no without asking; with
+--no-input, in CI or with VINTED_GALLETON_* overrides it is not asked.
+
 Examples:
   vinted auth login
   vinted auth login --cookies ~/Downloads/www.vinted.fr_cookies.txt --profile fr
-  cat cookies.txt | vinted auth login --cookies-stdin --domain www.vinted.es`,
+  cat cookies.txt | vinted auth login --cookies-stdin --domain www.vinted.es
+  vinted auth login --cookies cookies.txt --no-input --service`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cookiesFile != "" && cookiesStdin {
 				return output.Usagef("--cookies and --cookies-stdin are exclusive; pass one")
+			}
+			if withService && noService {
+				return output.Usagef("--service and --no-service are exclusive; pass one")
 			}
 			var src io.Reader
 			switch {
@@ -113,12 +122,31 @@ Examples:
 			if domain != "" && os.Getenv("VINTED_BASE_URL") == "" {
 				a.useSite("https://" + domain)
 			}
-			return a.managedLogin(cmd.Context(), export, domain)
+			if err := a.managedLogin(cmd.Context(), export, domain); err != nil {
+				return err
+			}
+			want := ""
+			if withService {
+				want = "on"
+			} else if noService {
+				want = "off"
+			}
+			if meta, err := a.Account.status(cmd.Context()); err == nil {
+				a.noteRenewal(meta.LastRefresh)
+			}
+			// The status comes after the renewal choice, so it reflects it.
+			serr := a.offerRenewalService(cmd.Context(), want)
+			if err := a.Printer.Print(a.currentStatus()); err != nil {
+				return err
+			}
+			return serr
 		},
 	}
 	cmd.Flags().StringVar(&cookiesFile, "cookies", "", "path to a cookie export (Netscape, JSON, or a Cookie header)")
 	cmd.Flags().BoolVar(&cookiesStdin, "cookies-stdin", false, "read the cookie export from stdin")
 	cmd.Flags().StringVar(&domain, "domain", "", "Vinted site, e.g. www.vinted.fr (default: the cookies' domain)")
+	cmd.Flags().BoolVar(&withService, "service", false, "enable background renewal after the login without asking")
+	cmd.Flags().BoolVar(&noService, "no-service", false, "do not enable background renewal and do not ask")
 	return cmd
 }
 
@@ -151,6 +179,10 @@ type authStatus struct {
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 	// Legacy is set for a profile an older vinted-cli saved; it needs a new login.
 	Legacy bool `json:"needs_login,omitempty"`
+	// RefreshExpires is when the login's refresh token expires, as imported.
+	RefreshExpires *time.Time `json:"refresh_expires,omitempty"`
+	// Warning is set when that is within 48 h and no renewal service runs.
+	Warning string `json:"warning,omitempty"`
 	// Engine is the session engine's view, read only by --check and refresh.
 	Engine *engineState `json:"engine,omitempty"`
 	Valid  *bool        `json:"session_valid,omitempty"`
@@ -198,6 +230,9 @@ func (s authStatus) Pretty(w io.Writer, color bool) {
 		if s.Valid != nil {
 			rows = append(rows, []string{"valid", fmt.Sprint(*s.Valid)})
 		}
+		if s.Warning != "" {
+			rows = append(rows, []string{"warning", s.Warning})
+		}
 	}
 	if s.Domain != "" {
 		rows = append(rows, []string{"site", s.Domain})
@@ -226,9 +261,8 @@ anything. --check also asks the session engine for its state and reads the
 account from Vinted, which renews the access token first when it is due.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			st := a.currentStatus()
 			if !check || a.Account == nil {
-				return a.Printer.Print(st)
+				return a.printStatus(a.currentStatus())
 			}
 			// A cooldown is not a verdict on the session, so it fails the check.
 			_, err := a.Client.Me(cmd.Context())
@@ -237,11 +271,16 @@ account from Vinted, which renews the access token first when it is due.`,
 				return err
 			}
 			valid := err == nil
+			meta, merr := a.Account.status(cmd.Context())
+			if merr == nil {
+				a.noteRenewal(meta.LastRefresh)
+			}
+			st := a.currentStatus()
 			st.Valid = &valid
-			if meta, err := a.Account.status(cmd.Context()); err == nil {
+			if merr == nil {
 				st.Engine = engineStateOf(meta)
 			}
-			return a.Printer.Print(st)
+			return a.printStatus(st)
 		},
 	}
 	cmd.Flags().BoolVar(&check, "check", false, "ask the session engine and Vinted whether the session still works")
@@ -261,6 +300,8 @@ func (a *App) currentStatus() authStatus {
 		}
 		st.LoggedIn, st.Source, st.SessionID, st.Account, st.UserID = true, "galleton", s.GalletonID, s.Login, s.UserID
 		st.UpdatedAt = timePtr(s.UpdatedAt)
+		st.RefreshExpires = timePtr(s.RefreshExpires)
+		st.Warning = a.renewalWarning(s)
 	}
 	return st
 }
@@ -294,8 +335,12 @@ login, and then only a new "vinted auth login" helps.`,
 			if err := a.Account.Renew(cmd.Context()); err != nil {
 				return err
 			}
+			meta, merr := a.Account.status(cmd.Context())
+			if merr == nil {
+				a.noteRenewal(meta.LastRefresh)
+			}
 			st := a.currentStatus()
-			if meta, err := a.Account.status(cmd.Context()); err == nil {
+			if merr == nil {
 				st.Engine = engineStateOf(meta)
 			}
 			return a.Printer.Print(st)

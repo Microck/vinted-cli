@@ -223,36 +223,52 @@ func authServiceDefinition(platform, name, exe, dir string, env [][2]string) str
 `
 }
 
+// serviceExec runs a service manager command (systemctl, launchctl,
+// schtasks). Tests replace it so enabling never reaches the real OS.
+var serviceExec = func(ctx context.Context, name string, args ...string) error {
+	return exec.CommandContext(ctx, name, args...).Run()
+}
+
 func (a *App) authServiceChange(ctx context.Context, enable bool) error {
+	res, err := a.authServiceApply(ctx, enable)
+	if err != nil {
+		return err
+	}
+	return a.Printer.Print(res)
+}
+
+// authServiceApply installs or removes the renewal service and returns what
+// `auth service enable/disable` prints.
+func (a *App) authServiceApply(ctx context.Context, enable bool) (map[string]any, error) {
 	if galleton.Configured() {
-		return output.Usagef("clear VINTED_GALLETON_* overrides to manage the bundled engine's startup")
+		return nil, output.Usagef("clear VINTED_GALLETON_* overrides to manage the bundled engine's startup")
 	}
 	if enable {
 		if err := checkServiceProxies(); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	u, dir, err := a.authServiceUnit()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	exe, err := os.Executable()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	exe, err = filepath.Abs(exe)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Keep the installed path, not a Homebrew version's resolved target: upgrades
 	// replace that symlink. Daemon bootstrap resolves it before executing.
 	for _, p := range []string{dir, exe, u.files[0]} {
 		if !filepath.IsAbs(p) || strings.ContainsAny(p, "\r\n") {
-			return output.Usagef("startup requires absolute single-line paths")
+			return nil, output.Usagef("startup requires absolute single-line paths")
 		}
 	}
 	command := func(name string, args ...string) error {
-		if err := exec.CommandContext(ctx, name, args...).Run(); err != nil {
+		if err := serviceExec(ctx, name, args...); err != nil {
 			return fmt.Errorf("%s failed: %w; startup configuration was retained for retry", name, err)
 		}
 		return nil
@@ -260,15 +276,15 @@ func (a *App) authServiceChange(ctx context.Context, enable bool) error {
 	if enable {
 		if u.platform == "schtasks" {
 			if err := checkLogonEnv(serviceEnv()); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		// Prove startup works before registering it with the user's OS session.
 		if _, err := a.galletonClient(ctx); err != nil {
-			return err
+			return nil, err
 		}
 		if err := os.MkdirAll(filepath.Dir(u.files[0]), 0700); err != nil {
-			return err
+			return nil, err
 		}
 		if u.platform != "schtasks" {
 			env := serviceEnv()
@@ -276,17 +292,17 @@ func (a *App) authServiceChange(ctx context.Context, enable bool) error {
 				env = launchdEnv(env)
 			}
 			if err := os.WriteFile(u.files[0], []byte(authServiceDefinition(u.platform, u.name, exe, dir, env)), 0600); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		switch u.platform {
 		case "systemd":
 			if err := command("systemctl", "--user", "daemon-reload"); err != nil {
-				return err
+				return nil, err
 			}
 			err = command("systemctl", "--user", "enable", "--now", u.name)
 		case "launchd":
-			_ = exec.CommandContext(ctx, "launchctl", "unload", u.files[0]).Run()
+			_ = serviceExec(ctx, "launchctl", "unload", u.files[0])
 			err = command("launchctl", "load", u.files[0])
 		case "schtasks":
 			task := fmt.Sprintf(`"%s" auth service run --dir "%s" --no-input`, exe, dir)
@@ -305,7 +321,7 @@ func (a *App) authServiceChange(ctx context.Context, enable bool) error {
 		case "launchd":
 			err = command("launchctl", "unload", u.files[0])
 		case "schtasks":
-			_ = exec.CommandContext(ctx, "schtasks", "/End", "/TN", u.name).Run()
+			_ = serviceExec(ctx, "schtasks", "/End", "/TN", u.name)
 			err = command("schtasks", "/Delete", "/TN", u.name, "/F")
 		}
 		if err == nil {
@@ -316,7 +332,7 @@ func (a *App) authServiceChange(ctx context.Context, enable bool) error {
 		}
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return a.Printer.Print(map[string]any{"startup_enabled": enable, "platform": u.platform, "unit": u.name, "state_dir": dir})
+	return map[string]any{"startup_enabled": enable, "platform": u.platform, "unit": u.name, "state_dir": dir}, nil
 }

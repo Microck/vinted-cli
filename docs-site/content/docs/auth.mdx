@@ -106,6 +106,21 @@ vinted auth service disable
 `vinted auth service stop` stops an idle one. The service carries the paths and `VINTED_PROXY`
 of the shell that enabled it, never a credential.
 
+After a successful `vinted auth login` in a terminal, the CLI offers to do this for you:
+
+```text
+keep this login alive in the background? [Y/n]
+```
+
+Enter or `y` runs `vinted auth service enable`; `n` leaves it off and prints how to turn it
+on later. `--service` and `--no-service` answer without asking (`--service` also works with
+`--no-input`). It is not asked with `--no-input`, in CI, when stdin or stderr is not a
+terminal, or when the service is already installed.
+
+Without the service, the refresh token only renews while a command runs. `vinted auth status`
+and `vinted doctor` warn when the refresh token from the login expires within 48 hours and no
+service is installed; the warning does not fail either command.
+
 Vinted can still expire or revoke the refresh token. When that happens commands exit `3` and
 you export the cookies again.
 

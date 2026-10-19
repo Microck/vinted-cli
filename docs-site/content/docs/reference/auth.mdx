@@ -41,10 +41,16 @@ you need the website): the browser still holds the refresh token the engine
 spends. The site comes from the cookies' domain unless --domain is given.
 Google, Apple and Facebook accounts work the same way.
 
+In a terminal, a successful login then asks whether to keep it alive in the
+background, which is the same as running "vinted auth service enable".
+--service answers yes and --no-service answers no without asking; with
+--no-input, in CI or with VINTED_GALLETON_* overrides it is not asked.
+
 ```bash
 vinted auth login
 vinted auth login --cookies ~/Downloads/www.vinted.fr_cookies.txt --profile fr
 cat cookies.txt | vinted auth login --cookies-stdin --domain www.vinted.es
+vinted auth login --cookies cookies.txt --no-input --service
 ```
 
 | Flag | Type | Default | Description |
@@ -52,6 +58,8 @@ cat cookies.txt | vinted auth login --cookies-stdin --domain www.vinted.es
 | `--cookies` | string | - | path to a cookie export (Netscape, JSON, or a Cookie header) |
 | `--cookies-stdin` | bool | `false` | read the cookie export from stdin |
 | `--domain` | string | - | Vinted site, e.g. www.vinted.fr (default: the cookies' domain) |
+| `--no-service` | bool | `false` | do not enable background renewal and do not ask |
+| `--service` | bool | `false` | enable background renewal after the login without asking |
 
 ## `vinted auth logout`
 
