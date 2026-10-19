@@ -357,10 +357,14 @@ func (a *App) openEngine(ctx context.Context, dir string) (*galleton.Client, err
 
 // releaseLaunchHold ends the pause a freshly started engine begins with:
 // providers a cooldown covers stay paused for it, the rest resume. It runs
-// under the startup lock, after the engine is up, so a block another process
-// records later reaches the engine after this and is never undone by it.
-// Sessions logout queued for deletion go first, while nothing renews. It
-// fails closed: on an error the hold lapses on its own.
+// under the startup lock, after the engine is up. A command that records a
+// block writes the cooldown before it pauses the engine, and one without a
+// lease waits for the startup lock first (galleton.IfRunning), so its pause
+// lands after this. The cooldowns are read again after the resume, so even a
+// pause that slipped in before it is restored. Sessions logout queued for
+// deletion, including ones another command queued since this one started,
+// go first, while nothing renews. It fails closed: on an error the hold
+// lapses on its own.
 func (a *App) releaseLaunchHold(ctx context.Context, c *galleton.Client, adapter []byte) error {
 	names, err := galleton.ProviderNames(adapter)
 	if err != nil {
@@ -370,6 +374,7 @@ func (a *App) releaseLaunchHold(ctx context.Context, c *galleton.Client, adapter
 	if err != nil {
 		return err
 	}
+	a.reloadPending()
 	a.dropPending(ctx, c)
 	for _, name := range names {
 		if d, ok := pauses[name]; ok {
@@ -381,7 +386,36 @@ func (a *App) releaseLaunchHold(ctx context.Context, c *galleton.Client, adapter
 			return fmt.Errorf("could not release the session engine's start hold on %s: %w", name, managedError(err))
 		}
 	}
+	after, err := a.enginePauses()
+	if err != nil {
+		return err
+	}
+	for name, d := range after {
+		if _, held := pauses[name]; held {
+			continue
+		}
+		if err := c.Pause(ctx, name, d); err != nil {
+			return fmt.Errorf("could not pause the session engine for the cooldown on %s: %w", name, managedError(err))
+		}
+	}
 	return nil
+}
+
+// reloadPending adds sessions other commands queued for deletion since this
+// one read credentials.toml, as if it had read them then.
+func (a *App) reloadPending() {
+	disk, err := config.LoadCredentials(a.Paths.CredentialsFile)
+	if err != nil {
+		fmt.Fprintf(a.Stderr, "vinted: could not read the logged-out sessions left to remove: %v\n", err)
+		return
+	}
+	for _, id := range disk.Forget {
+		// One this command already deleted is in loadedCreds only.
+		if !slices.Contains(a.Creds.Forget, id) && !slices.Contains(a.loadedCreds.Forget, id) {
+			a.Creds.Forget = append(a.Creds.Forget, id)
+			a.loadedCreds.Forget = append(a.loadedCreds.Forget, id)
+		}
+	}
 }
 
 // engineHeldError is openEngine refusing to start the engine during a

@@ -482,10 +482,20 @@ func activeLeases(dir string) (bool, error) {
 // IfRunning connects to an already running bundled daemon without taking a
 // lease or starting one. It returns nil, nil only when no host runs; a host
 // that runs but cannot be reached is an error. For short calls (a pause).
+// It waits out a start in progress first: the starting command releases the
+// launch hold under the startup lock, so a pause sent after this cannot be
+// undone by that release.
 func IfRunning(ctx context.Context, dir string) (*Client, error) {
 	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
+	wait, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	lock, err := filelock.Acquire(wait, filepath.Join(dir, "startup.lock"))
+	cancel()
+	if err != nil {
+		return nil, err
+	}
+	filelock.Release(lock)
 	c, err := running(ctx, dir, "")
 	if err == nil {
 		return c, nil
