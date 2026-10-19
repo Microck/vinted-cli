@@ -29,6 +29,7 @@ test("home opens docs; mobile layout and search index remain available", async (
   return { status: response.status, data: await response.json() };
  });
  expect(result.status).toBe(200);
- expect(result.data).toBeTruthy();
+ const indexedPages = Object.values(result.data.docs.docs) as {type:string;url:string;content:string}[];
+ expect(indexedPages.some(page => page.type === "page" && page.url === "/docs/auth" && page.content.length > 0)).toBe(true);
  expect(await browser.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
 });
