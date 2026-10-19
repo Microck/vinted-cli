@@ -153,8 +153,13 @@ func (a *App) recordEngineBlocks(ctx context.Context, c *galleton.Client, report
 			continue
 		}
 		if until, ok := active[u.Host]; ok && !until.Before(s.NextRefresh) {
+			// A running cooldown already covers the engine's retry; make
+			// sure the provider holds for it (a pause only ever extends).
+			if err := c.Pause(ctx, s.Provider, time.Until(until)); err != nil {
+				return fmt.Errorf("could not pause the session engine for the cooldown on %s: %w", u.Host, managedError(err))
+			}
 			reported[s.ID] = s.NextRefresh
-			continue // a running cooldown already covers the engine's retry
+			continue
 		}
 		g := throttle.New(a.Paths.StateDir, base, throttle.Options{Clock: throttleClock})
 		wait, err := g.Block("vinted's bot protection (Datadome/Cloudflare) blocked the session engine's scheduled token renewal", time.Until(s.NextRefresh))
