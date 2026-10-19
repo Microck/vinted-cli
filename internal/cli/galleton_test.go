@@ -90,6 +90,12 @@ func TestOtherCustomSiteCooldownLeavesTheEngineRunning(t *testing.T) {
 	h.must("", "me", "show")
 }
 
+// engineUp reports a published engine endpoint without running a command.
+func (h *harness) engineUp() bool {
+	_, err := os.Stat(filepath.Join(h.engineDir(), "endpoint.json"))
+	return err == nil
+}
+
 func (h *harness) engineRunning() bool {
 	h.t.Helper()
 	return decode[map[string]any](h.t, h.must("", "auth", "service", "status").stdout)["running"] == true
@@ -271,7 +277,8 @@ func TestMCPServerReportsAnEngineRenewalBlock(t *testing.T) {
 	t.Cleanup(cli.UseServiceLoop(50*time.Millisecond, nil))
 	s := h.mcpServer()
 	deadline := time.Now().Add(30 * time.Second)
-	for decode[map[string]any](t, h.must("", "cooldown").stdout)["blocked"] != true {
+	// Only the server runs a command now: read the state files directly.
+	for h.throttleState()[h.site()]["blocked_until"] == nil {
 		if time.Now().After(deadline) {
 			t.Fatal("the mcp server did not record the engine's renewal block")
 		}
@@ -301,12 +308,15 @@ func TestAuthServiceRunWaitsOutACooldown(t *testing.T) {
 		t.Fatalf("auth service run exited during the cooldown: exit %d\n%s", r.code, r.stderr)
 	default:
 	}
-	if h.engineRunning() {
+	// The service command is running: check the files, not other commands.
+	if h.engineUp() {
 		t.Fatal("auth service run started the engine during a cooldown")
 	}
-	h.must("", "cooldown", "clear", "--yes")
+	if err := os.Remove(filepath.Join(h.home, "state", "vinted-cli", "throttle.json")); err != nil {
+		t.Fatal(err)
+	}
 	deadline := time.Now().Add(60 * time.Second)
-	for !h.engineRunning() {
+	for !h.engineUp() {
 		if time.Now().After(deadline) {
 			t.Fatal("auth service run did not start the engine after the cooldown")
 		}
