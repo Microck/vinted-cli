@@ -523,7 +523,7 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 		// Queue it with the profile's replaced sessions, which the next
 		// command that reaches the engine deletes. A profile without a
 		// session yet has nothing to hang it on: the warning names it.
-		if s, ok := a.Creds.Profiles[a.Profile]; ok && s.GalletonID != "" && !slices.Contains(s.Replaced, id) {
+		if s, ok := a.Creds.Profiles[a.Profile]; ok && s.GalletonID != "" && s.GalletonID != id && !slices.Contains(s.Replaced, id) {
 			s.Replaced = append(s.Replaced, id)
 			a.Creds.Profiles[a.Profile] = s
 			if serr := a.saveCreds(); serr == nil {
@@ -575,8 +575,15 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 	if previous != "" && previous != id {
 		pending = append(pending, previous)
 	}
+	oldSession, hadSession := a.Creds.Profiles[a.Profile]
 	a.Creds.Profiles[a.Profile] = config.Session{GalletonID: id, Replaced: pending, UserID: me.ID, Login: me.Login, UpdatedAt: time.Now().UTC()}
 	if err := a.saveCreds(); err != nil {
+		// The profile keeps its previous session, in memory too.
+		if hadSession {
+			a.Creds.Profiles[a.Profile] = oldSession
+		} else {
+			delete(a.Creds.Profiles, a.Profile)
+		}
 		a.Cfg.DefaultProfile = oldDefault
 		if hadProfile {
 			a.Cfg.Profiles[a.Profile] = oldProfile
