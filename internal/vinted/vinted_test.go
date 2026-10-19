@@ -419,7 +419,7 @@ func TestReadCookieExport(t *testing.T) {
 		if export.Site != wantSite || values[RefreshCookie] != "fake-refresh-token" || values["datadome"] != "fake-datadome" || values[AccessCookie] == "" {
 			t.Fatalf("%s: site=%q cookies=%v", name, export.Site, values)
 		}
-		if exp := AccessExpiry(export.Cookies); exp.Year() != 2100 {
+		if exp := AccessExpiry(export.Cookies); exp.UTC().Year() != 2100 {
 			t.Fatalf("%s: access expiry %v", name, exp)
 		}
 	}
@@ -455,7 +455,7 @@ func TestReadCookieExport(t *testing.T) {
 	if err != nil || export.Site != "" || !slices.Equal(export.Sites, []string{"www.vinted.es", "www.vinted.fr"}) {
 		t.Fatalf("two-site export: site=%q sites=%v err=%v", export.Site, export.Sites, err)
 	}
-	if fr, es := AccessExpiry(export.For("https://www.vinted.fr")), AccessExpiry(export.For("https://www.vinted.es")); fr.Year() != 2100 || es.Year() != 2090 {
+	if fr, es := AccessExpiry(export.For("https://www.vinted.fr")), AccessExpiry(export.For("https://www.vinted.es")); fr.UTC().Year() != 2100 || es.UTC().Year() != 2090 {
 		t.Fatalf("expiries fr=%v es=%v", fr, es)
 	}
 	if _, err := ReadCookieExport(strings.NewReader("foo=bar; baz=qux")); err == nil {

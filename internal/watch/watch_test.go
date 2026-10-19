@@ -161,3 +161,16 @@ func TestSearchWatchEmitInitialReportsEverythingOnce(t *testing.T) {
 		t.Fatalf("reshuffle after emit-initial reported %v", evs)
 	}
 }
+
+func TestSearchWatchDeduplicatesRepeatedItemsWithinCheck(t *testing.T) {
+	cs, c := newCatalogServer(t)
+	st, w := newSearchWatch(t)
+	cs.set(1000000009, 1000000009)
+	result, err := Check(context.Background(), c, st, w, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Events) != 1 || len(result.Upserts) != 1 {
+		t.Fatalf("duplicate item produced %d events and %d upserts", len(result.Events), len(result.Upserts))
+	}
+}

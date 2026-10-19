@@ -7,25 +7,28 @@
     "build": "node --input-type=module -e \"import { copyFileSync } from 'node:fs'; copyFileSync('../scripts/install.sh', 'public/install.sh');\" && next build",
     "start": "python3 -m http.server 3000 --directory out",
     "typecheck": "tsc --noEmit",
-    "postinstall": "fumadocs-mdx"
+    "postinstall": "fumadocs-mdx",
+    "test:e2e": "E2E_TELEMETRY_DISABLED=1 e2e run"
   },
   "dependencies": {
     "fumadocs-core": "^16.15.11",
     "fumadocs-mdx": "^15.4.1",
     "fumadocs-ui": "^16.15.11",
+    "lucide-react": "^0.525.0",
     "next": "^16.3.5",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "lucide-react": "^0.525.0"
+    "react-dom": "^19.3.0"
   },
   "devDependencies": {
+    "@e2e-dev/web": "0.15.2",
+    "@tailwindcss/postcss": "^4.1.11",
     "@types/mdx": "^2.0.13",
     "@types/node": "^24.0.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
-    "tailwindcss": "^4.1.11",
-    "@tailwindcss/postcss": "^4.1.11",
+    "e2e": "0.21.2",
     "postcss": "^8.5.6",
+    "tailwindcss": "^4.1.11",
     "typescript": "^5.8.3"
   }
 }
