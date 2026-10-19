@@ -120,8 +120,10 @@ it.
 `auth status` and `profile list` stay offline and show `source: "galleton"` and the session
 ID. `auth status --check` asks the engine for its state (status, last and next renewal, access
 token expiry) and reads the account. `auth refresh` renews now and fails nonzero when Vinted
-refuses. `auth logout` and `profile remove` delete the engine's session before the local
-reference; this does not log the browser out.
+refuses. `auth logout` and `profile remove` drop the local reference first, then delete the
+engine's session, so `credentials.toml` never names a session the engine already deleted. A
+deletion that fails stays queued in `credentials.toml` (`forget_galleton_ids`) and the next
+command that reaches the engine retries it; this does not log the browser out.
 
 ## Upgrading from an older vinted-cli
 

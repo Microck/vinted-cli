@@ -20,3 +20,10 @@ func UseServiceLoop(tick time.Duration, stop <-chan struct{}) (restore func()) {
 	serviceTick, serviceStop = tick, stop
 	return func() { serviceTick, serviceStop = prevTick, prevStop }
 }
+
+// UseChatPoll lowers the `chat open --interval` floor until restored.
+func UseChatPoll(floor time.Duration) (restore func()) {
+	prev := minChatPoll
+	minChatPoll = floor
+	return func() { minChatPoll = prev }
+}

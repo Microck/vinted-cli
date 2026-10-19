@@ -123,8 +123,9 @@ a challenge page is exit 5.
   during a cooldown). A Profile saved by an older version reports `needs_login`.
 - `auth refresh` asks the engine to renew now (through the request gate) and prints status
   with the engine's view. A refused renewal is exit 3 and needs a new browser export.
-- `auth logout [--yes]` deletes the engine's session, then the stored reference. This does
-  not revoke the browser login.
+- `auth logout [--yes]` drops the stored reference, then deletes the engine's session. A
+  deletion the engine refuses stays queued in `credentials.toml` and is retried by the next
+  command that reaches the engine. This does not revoke the browser login.
 - `auth service enable|disable|status|run|stop` manages the session engine's optional
   unattended renewal: `enable` installs a systemd user unit, LaunchAgent or Windows logon
   task running `auth service run`, with the same frozen environment as watch units (and the
@@ -263,7 +264,8 @@ Conversation argument: the numeric Conversation id.
 - `chat open CONV [--interval DUR]` line-mode chat: prints recent history, then polls every
   `--interval` (default 30s, minimum 10s) for new Messages while each typed line is sent.
   `/quit` or EOF exits. With `--format jsonl` incoming Messages print as JSON objects. A
-  block ends it with exit 5.
+  block ends it with exit 5, including a scheduled engine renewal blocked between polls,
+  which each poll checks for first.
 - `chat offer CONV AMOUNT [--currency CODE]` sends a price offer (buyer: offer request;
   seller: counter offer). AMOUNT is a positive decimal with at most two fractional digits.
   `chat offer accept CONV` / `chat offer decline CONV` answer the latest pending offer

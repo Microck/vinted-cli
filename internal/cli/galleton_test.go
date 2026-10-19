@@ -1,10 +1,14 @@
 package cli_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -342,5 +346,89 @@ func TestGuestBlockPausesARunningEngine(t *testing.T) {
 	}
 	if until := h.pausedUntil(); until == nil {
 		t.Fatal("a guest block left the running engine renewing")
+	}
+}
+
+// chat open checks for a renewal the engine ran on its own and the bot
+// protection blocked between polls, and stops with exit 5 on it.
+func TestChatOpenReportsAnEngineRenewalBlockBetweenPolls(t *testing.T) {
+	h, _ := newSellerHarness(t)
+	h.fake.setBlock("/web/api/auth/refresh", datadomeBlock(t))
+	if r := h.run("", "auth", "refresh"); r.code != 5 {
+		t.Fatalf("blocked renewal: exit %d\n%s", r.code, r.stderr)
+	}
+	// Forget the cooldown the command recorded and lift the block: the engine
+	// still holds the session in its blocked back-off, as after a scheduled
+	// renewal, and would keep serving polls with the old credentials.
+	h.must("", "cooldown", "clear", "--yes")
+	h.fake.setBlock("", nil)
+	t.Cleanup(cli.UseChatPoll(20 * time.Millisecond))
+	stdin, w := io.Pipe()
+	defer w.Close()
+	var out, errb bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		done <- cli.Execute("test", []string{"chat", "open", fmt.Sprint(buyerConvID), "--interval", "20ms"}, stdin, &out, &errb)
+	}()
+	select {
+	case code := <-done:
+		if code != 5 {
+			t.Fatalf("chat open: exit %d\n%s", code, errb.String())
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("chat open kept polling through the engine's blocked renewal")
+	}
+	if cd := decode[map[string]any](t, h.must("", "cooldown").stdout); cd["blocked"] != true {
+		t.Fatalf("chat open did not record the engine's renewal block: %v", cd)
+	}
+}
+
+// logout writes credentials.toml before the engine deletes the session, so a
+// failed write leaves the login usable and a retry works.
+func TestLogoutKeepsTheSessionWhenTheFileCannotBeWritten(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs unix permissions that apply to the test user")
+	}
+	h := newHarness(t)
+	id := decode[map[string]any](t, h.login().stdout)["session_id"].(string)
+	dir := filepath.Dir(h.credentialsFile())
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	r := h.run("", "auth", "logout")
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if r.code == 0 {
+		t.Fatal("logout succeeded without writing credentials.toml")
+	}
+	if st := decode[map[string]any](t, h.must("", "auth", "status").stdout); st["session_id"] != id {
+		t.Fatalf("status after a failed logout: %v", st)
+	}
+	h.must("", "me", "show")
+	h.must("", "auth", "logout")
+	if sessions, err := h.engineClient().List(context.Background()); err != nil || len(sessions) != 0 {
+		t.Fatalf("engine sessions after logout: %+v %v", sessions, err)
+	}
+}
+
+// A session logout dropped from credentials.toml but the engine did not
+// delete yet is deleted by the next command that reaches the engine.
+func TestPendingSessionDeletionIsRetried(t *testing.T) {
+	h := newHarness(t)
+	id := decode[map[string]any](t, h.login().stdout)["session_id"].(string)
+	if err := os.WriteFile(h.credentialsFile(), []byte("forget_galleton_ids = ['"+id+"']\n[profiles]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.must("", "auth", "logout")
+	if sessions, err := h.engineClient().List(context.Background()); err != nil || len(sessions) != 0 {
+		t.Fatalf("engine sessions after the retried deletion: %+v %v", sessions, err)
+	}
+	raw, err := os.ReadFile(h.credentialsFile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), id) {
+		t.Fatalf("credentials.toml still queues the deleted session:\n%s", raw)
 	}
 }

@@ -308,6 +308,7 @@ func (a *App) galletonClient(ctx context.Context) (*galleton.Client, error) {
 			c.Close()
 			return nil, err
 		}
+		a.dropPending(ctx, c)
 		a.sessionClient = c
 		return c, nil
 	}
@@ -348,6 +349,7 @@ func (a *App) openEngine(ctx context.Context, dir string) (*galleton.Client, err
 		c.Close()
 		return nil, err
 	}
+	a.dropPending(ctx, c)
 	return c, nil
 }
 
@@ -406,24 +408,65 @@ func (a *App) carryCooldown(ctx context.Context, c *galleton.Client) error {
 	return nil
 }
 
-// forgetManagedProfile deletes a profile's daemon session before its local
-// reference goes. A failed deletion keeps the reference for a retry. It does
-// not log the browser out.
-func (a *App) forgetManagedProfile(ctx context.Context, profile string) error {
-	s, ok := a.Creds.Profiles[profile]
-	if !ok || s.GalletonID == "" {
+// dropProfileSession removes a profile from credentials.toml and then deletes
+// its engine sessions. The file is written first, with the session ids moved
+// to the pending list, so a failed write leaves everything as it was and the
+// file never names a session the engine already deleted. A deletion that
+// fails stays pending: the next command that reaches the engine retries it.
+// It does not log the browser out.
+func (a *App) dropProfileSession(ctx context.Context, profile string) error {
+	if s, ok := a.Creds.Profiles[profile]; ok {
+		for _, id := range append(append([]string{}, s.Replaced...), s.GalletonID) {
+			if id != "" && !slices.Contains(a.Creds.Forget, id) {
+				a.Creds.Forget = append(a.Creds.Forget, id)
+			}
+		}
+		delete(a.Creds.Profiles, profile)
+		if err := a.saveCreds(); err != nil {
+			return err
+		}
+	}
+	if len(a.Creds.Forget) == 0 {
 		return nil
 	}
 	c, err := a.galletonClient(ctx)
-	if err != nil {
-		return managedError(err)
+	var held *engineHeldError
+	if errors.As(err, &held) {
+		// A stopped engine renews nothing; the deletion waits for its start.
+		fmt.Fprintf(a.Stderr, "vinted: the session engine stays stopped during the cooldown; it deletes the logged-out session when it next starts\n")
+		return nil
 	}
-	for _, id := range append(append([]string{}, s.Replaced...), s.GalletonID) {
-		if err := c.Forget(ctx, id); err != nil {
-			return managedError(err)
-		}
+	if err != nil {
+		return fmt.Errorf("the profile is logged out here, but its session is still in the session engine and is deleted by the next command that reaches it: %w", managedError(err))
+	}
+	a.dropPending(ctx, c)
+	if n := len(a.Creds.Forget); n > 0 {
+		return fmt.Errorf("the profile is logged out here, but the session engine could not delete %d session(s) yet; the next command that reaches it retries", n)
 	}
 	return nil
+}
+
+// dropPending deletes the engine sessions logout and profile remove left
+// pending, and records the ones that still could not be deleted. Failure is
+// a warning: they are retried on the next attach.
+func (a *App) dropPending(ctx context.Context, c *galleton.Client) {
+	if len(a.Creds.Forget) == 0 {
+		return
+	}
+	var left []string
+	for _, id := range a.Creds.Forget {
+		if err := c.Forget(ctx, id); err != nil {
+			fmt.Fprintf(a.Stderr, "vinted: could not remove the logged-out session %s from the engine yet (it is retried later): %v\n", id, managedError(err))
+			left = append(left, id)
+		}
+	}
+	if len(left) == len(a.Creds.Forget) {
+		return
+	}
+	a.Creds.Forget = left
+	if err := a.saveCreds(); err != nil {
+		fmt.Fprintf(a.Stderr, "vinted: could not record the logged-out sessions left to remove: %v\n", err)
+	}
 }
 
 // dropReplaced deletes engine sessions a login replaced, and records in

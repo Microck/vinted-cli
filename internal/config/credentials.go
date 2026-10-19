@@ -13,7 +13,7 @@ import (
 )
 
 func CloneCredentials(in Credentials) Credentials {
-	return Credentials{Profiles: maps.Clone(in.Profiles)}
+	return Credentials{Forget: slices.Clone(in.Forget), Profiles: maps.Clone(in.Profiles)}
 }
 
 // sameSession compares persisted timestamps by instant, not by time-zone
@@ -77,6 +77,16 @@ func MergeCredentials(path string, before, after Credentials) (Credentials, erro
 			delete(disk.Profiles, k)
 		}
 	}
+	// Pending deletions merge as a set: keep what other commands added, apply
+	// only this command's own additions and removals.
+	for _, id := range after.Forget {
+		if !slices.Contains(before.Forget, id) && !slices.Contains(disk.Forget, id) {
+			disk.Forget = append(disk.Forget, id)
+		}
+	}
+	disk.Forget = slices.DeleteFunc(disk.Forget, func(id string) bool {
+		return slices.Contains(before.Forget, id) && !slices.Contains(after.Forget, id)
+	})
 	if err := SaveCredentials(path, disk); err != nil {
 		return Credentials{}, err
 	}
