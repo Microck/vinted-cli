@@ -153,6 +153,9 @@ func (g *Gate) Path() string { return g.path }
 // Interval is the effective gap between requests.
 func (g *Gate) Interval() time.Duration { return g.interval }
 
+// Err is the configuration error that makes every request fail, if any.
+func (g *Gate) Err() error { return g.err }
+
 // state is the file. Sites are keyed by host.
 type state struct {
 	Sites map[string]*site `json:"sites"`
@@ -379,6 +382,23 @@ func (g *Gate) Status() (Status, error) {
 		return Status{Site: g.host, RequestInterval: g.interval.String(), File: g.path}, err
 	}
 	return g.status(s), nil
+}
+
+// Cooldowns lists every site in the shared file that is still blocked, by
+// host, with the end of its cooldown.
+func (g *Gate) Cooldowns() (map[string]time.Time, error) {
+	st, err := g.load()
+	if err != nil {
+		return nil, err
+	}
+	now := g.clock.Now()
+	out := map[string]time.Time{}
+	for host, s := range st.Sites {
+		if s != nil && now.Before(s.BlockedUntil) {
+			out[host] = s.BlockedUntil
+		}
+	}
+	return out, nil
 }
 
 func (g *Gate) status(s site) Status {

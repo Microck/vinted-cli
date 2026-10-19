@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -10,14 +12,15 @@ import (
 
 func TestCredentialsFileIsPrivate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials.toml")
-	if err := SaveCredentials(path, Credentials{Profiles: map[string]Session{"one": {Cookies: map[string]string{"access_token_web": "a"}}}}); err != nil {
+	if err := SaveCredentials(path, Credentials{Profiles: map[string]Session{"one": {GalletonID: "vinted-one", Login: "one"}}}); err != nil {
 		t.Fatal(err)
 	}
 	st, err := os.Stat(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Mode().Perm() != 0o600 {
+	// Windows has no Unix permission bits; the user profile's ACLs protect it.
+	if runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
 		t.Fatalf("credentials mode %v, want 0600", st.Mode().Perm())
 	}
 }
@@ -34,7 +37,7 @@ func TestConcurrentLoginsPreserveEachOther(t *testing.T) {
 		go func(name string) {
 			defer wg.Done()
 			next := CloneCredentials(before)
-			next.Profiles[name] = Session{Login: name, Cookies: map[string]string{"access_token_web": name}}
+			next.Profiles[name] = Session{Login: name, GalletonID: "vinted-" + name}
 			if _, err := MergeCredentials(path, before, next); err != nil {
 				t.Error(err)
 			}
@@ -46,7 +49,7 @@ func TestConcurrentLoginsPreserveEachOther(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"one", "two"} {
-		if after.Profiles[name].Cookies["access_token_web"] != name {
+		if after.Profiles[name].GalletonID != "vinted-"+name {
 			t.Fatal("concurrent login lost:", name)
 		}
 	}
@@ -70,7 +73,7 @@ func TestStaleCommandCannotResurrectLogout(t *testing.T) {
 func TestMergeIgnoresTimeRepresentation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials.toml")
 	instant := time.Date(2026, 10, 4, 12, 0, 0, 0, time.FixedZone("", 5*3600+30*60))
-	old := Session{Login: "a", SessionExpires: instant.Add(time.Hour), UpdatedAt: instant}
+	old := Session{Login: "a", GalletonID: "vinted-a", UpdatedAt: instant}
 	if err := SaveCredentials(path, Credentials{Profiles: map[string]Session{"one": old}}); err != nil {
 		t.Fatal(err)
 	}
@@ -87,30 +90,28 @@ func TestMergeIgnoresTimeRepresentation(t *testing.T) {
 	}
 }
 
-func TestRotateSessionMergesCookies(t *testing.T) {
+// A file an older version wrote keeps its cookie jar until the next write;
+// the profile is marked legacy meanwhile, and the write drops every cookie.
+func TestLegacyCookieJarIsFlaggedAndDropped(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials.toml")
-	if err := SaveCredentials(path, Credentials{Profiles: map[string]Session{"one": {Cookies: map[string]string{"access_token_web": "old", "datadome": "d"}}}}); err != nil {
+	legacy := "[profiles.old]\nuser_id = 1\nlogin = 'old'\n[profiles.old.cookies]\nrefresh_token_web = 'legacy-secret-token'\n"
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	exp := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
-	if _, err := RotateSession(path, "one", map[string]string{"access_token_web": "new"}, exp); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := RotateSession(path, "gone", map[string]string{"access_token_web": "x"}, exp); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := RotateSession(path, "one", map[string]string{"datadome": "d2"}, time.Time{}); err != nil {
-		t.Fatal(err)
-	}
-	creds, err := LoadCredentials(path)
+	before, err := LoadCredentials(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := creds.Profiles["one"]
-	if s.Cookies["access_token_web"] != "new" || s.Cookies["datadome"] != "d2" || !s.SessionExpires.Equal(exp) {
-		t.Fatalf("rotation not stored: %+v", s.SessionExpires)
+	if !before.Profiles["old"].Legacy {
+		t.Fatal("legacy cookie jar not flagged")
 	}
-	if _, ok := creds.Profiles["gone"]; ok {
-		t.Fatal("rotation resurrected a logged-out profile")
+	after := CloneCredentials(before)
+	after.Profiles["new"] = Session{GalletonID: "vinted-new", Login: "new"}
+	if _, err := MergeCredentials(path, before, after); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	if strings.Contains(string(raw), "legacy-secret-token") {
+		t.Fatal("a credentials write kept a legacy cookie")
 	}
 }

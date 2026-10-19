@@ -6,31 +6,26 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/Microck/vinted-cli/internal/filelock"
 )
 
 func CloneCredentials(in Credentials) Credentials {
-	out := Credentials{Profiles: map[string]Session{}}
-	for k, v := range in.Profiles {
-		v.Cookies = maps.Clone(v.Cookies)
-		out.Profiles[k] = v
-	}
-	return out
+	return Credentials{Profiles: maps.Clone(in.Profiles)}
 }
 
 // sameSession compares persisted timestamps by instant, not by time-zone
 // pointers or monotonic clock data that may differ after a TOML round trip.
 func sameSession(a, b Session) bool {
-	return maps.Equal(a.Cookies, b.Cookies) && a.UserID == b.UserID && a.Login == b.Login &&
-		a.SessionExpires.Equal(b.SessionExpires) && a.UpdatedAt.Equal(b.UpdatedAt)
+	return a.GalletonID == b.GalletonID && slices.Equal(a.Replaced, b.Replaced) && a.UserID == b.UserID && a.Login == b.Login &&
+		a.Legacy == b.Legacy && a.UpdatedAt.Equal(b.UpdatedAt)
 }
 
 // LockCredentials serialises every read-modify-write of credentials.toml across
-// processes: a watch timer refreshing tokens and a manual command must not
-// overwrite each other's rotated cookies, nor refresh with the same token. The
-// lock is not re-entrant. Waiting gives up after 30s or when ctx ends.
+// processes, so two logins to different profiles cannot lose each other's
+// write. The lock is not re-entrant. Waiting gives up after 30s or when ctx ends.
 func LockCredentials(ctx context.Context, path string) (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
@@ -82,45 +77,6 @@ func MergeCredentials(path string, before, after Credentials) (Credentials, erro
 			delete(disk.Profiles, k)
 		}
 	}
-	if err := SaveCredentials(path, disk); err != nil {
-		return Credentials{}, err
-	}
-	return disk, nil
-}
-
-// RotateSession stores rotated cookies for one profile under the lock. The
-// cookies are merged over what is on disk, so cookies another process added
-// or rotated meanwhile survive. A zero expires keeps the stored access token
-// expiry. A profile logged out meanwhile stays logged out.
-func RotateSession(path, profile string, cookies map[string]string, expires time.Time) (Credentials, error) {
-	unlock, err := LockCredentials(context.Background(), path)
-	if err != nil {
-		return Credentials{}, err
-	}
-	defer unlock()
-	return RotateSessionLocked(path, profile, cookies, expires)
-}
-
-// RotateSessionLocked is RotateSession for a caller already holding
-// LockCredentials, such as a token refresh guarded end to end.
-func RotateSessionLocked(path, profile string, cookies map[string]string, expires time.Time) (Credentials, error) {
-	disk, err := LoadCredentials(path)
-	if err != nil {
-		return Credentials{}, err
-	}
-	s, ok := disk.Profiles[profile]
-	if !ok {
-		return disk, nil
-	}
-	if s.Cookies == nil {
-		s.Cookies = map[string]string{}
-	}
-	maps.Copy(s.Cookies, cookies)
-	if !expires.IsZero() {
-		s.SessionExpires = expires
-	}
-	s.UpdatedAt = time.Now().UTC()
-	disk.Profiles[profile] = s
 	if err := SaveCredentials(path, disk); err != nil {
 		return Credentials{}, err
 	}

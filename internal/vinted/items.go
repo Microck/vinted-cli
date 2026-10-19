@@ -2,12 +2,14 @@ package vinted
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"math"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -66,59 +68,110 @@ func isVintedHost(host string) bool {
 // itemSidebar is the item object the page's sidebar is rendered from; its
 // photos, price and plugins are RSC references resolved before decoding.
 type itemSidebar struct {
-	ID         flexInt   `json:"id"`
-	Title      string    `json:"title"`
-	CatalogID  flexInt   `json:"catalog_id"`
-	Currency   string    `json:"currency"`
-	SellerID   flexInt   `json:"seller_id"`
-	Business   bool      `json:"business"`
-	IsHidden   bool      `json:"is_hidden"`
-	IsReserved bool      `json:"is_reserved"`
-	CanBuy     *bool     `json:"can_buy"`
-	Price      *rawMoney `json:"price"`
-	Photos     []struct {
+	ID         flexInt            `json:"id"`
+	Title      string             `json:"title"`
+	CatalogID  flexInt            `json:"catalog_id"`
+	Currency   string             `json:"currency"`
+	SellerID   flexInt            `json:"seller_id"`
+	Business   bool               `json:"business"`
+	IsHidden   bool               `json:"is_hidden"`
+	IsReserved bool               `json:"is_reserved"`
+	CanBuy     *bool              `json:"can_buy"`
+	Price      lenient[*rawMoney] `json:"price"`
+	Photos     lenient[[]struct {
 		URL           string `json:"url"`
 		Width         int    `json:"width"`
 		Height        int    `json:"height"`
 		IsMain        bool   `json:"is_main"`
 		DominantColor string `json:"dominant_color_opaque"`
-	} `json:"photos"`
-	BrandDTO *struct {
+	}] `json:"photos"`
+	BrandDTO lenient[*struct {
 		ID    flexInt `json:"id"`
 		Title string  `json:"title"`
-	} `json:"brand_dto"`
-	Plugins []itemPlugin `json:"plugins"`
+	}] `json:"brand_dto"`
+	Plugins lenient[[]itemPlugin] `json:"plugins"`
 }
 
+// itemPlugin is one block of the item page. Data stays raw and is decoded
+// only by the plugin that owns its schema, so one plugin's odd field cannot
+// break the others.
 type itemPlugin struct {
-	Name string `json:"name"`
-	Data struct {
-		Description string  `json:"description"`
-		Name        string  `json:"name"`
-		SellerID    flexInt `json:"seller_id"`
-		Title       string  `json:"title"`
-		Theme       string  `json:"theme"`
-		Attributes  []struct {
-			Code string `json:"code"`
-			Data struct {
-				ID    flexInt `json:"id"`
-				Title string  `json:"title"`
-				Value string  `json:"value"`
-			} `json:"data"`
-		} `json:"attributes"`
-		// user_info_header: the seller box.
-		Business           bool    `json:"business"`
-		FeedbackCount      int     `json:"feedback_count"`
-		FeedbackReputation float64 `json:"feedback_reputation"`
-		UserInfo           []struct {
-			Key  string `json:"key"`
-			Text string `json:"text"`
-		} `json:"user_info"`
-		// seller_badges_info.
-		Badges []struct {
-			Type string `json:"type"`
-		} `json:"badges"`
-	} `json:"data"`
+	Name string          `json:"name"`
+	Data json.RawMessage `json:"data"`
+}
+
+type descriptionPlugin struct {
+	Description string `json:"description"`
+}
+
+type attributesPlugin struct {
+	Attributes []struct {
+		Code string `json:"code"`
+		Data struct {
+			ID    flexInt `json:"id"`
+			Title string  `json:"title"`
+			Value string  `json:"value"`
+		} `json:"data"`
+	} `json:"attributes"`
+}
+
+// userInfoHeaderPlugin is the seller box.
+type userInfoHeaderPlugin struct {
+	Name               string                     `json:"name"`
+	Business           bool                       `json:"business"`
+	FeedbackCount      flexInt                    `json:"feedback_count"`
+	FeedbackReputation flexFloat                  `json:"feedback_reputation"`
+	UserInfo           lenient[[]userInfoLine]    `json:"user_info"`
+	Badges             lenient[[]json.RawMessage] `json:"badges"`
+}
+
+type userInfoLine struct {
+	Key  string `json:"key"`
+	Text string `json:"text"`
+}
+
+type sellerBadgesPlugin struct {
+	Badges lenient[[]json.RawMessage] `json:"badges"`
+}
+
+// badgeName reads a badge given as a plain string ("Pro") or as an object
+// naming it ({"type": "..."}, or a title or name). ok is false for any other
+// shape, which the caller keeps raw.
+// addBadges appends the badges it can name and keeps the others raw under
+// key.
+func addBadges(names []string, badges lenient[[]json.RawMessage], key string, unparsed *map[string]json.RawMessage) []string {
+	keepRaw(unparsed, key, badges.Raw)
+	for i, b := range badges.V {
+		if n, ok := badgeName(b); ok {
+			if !slices.Contains(names, n) {
+				names = append(names, n)
+			}
+		} else if string(b) != "null" {
+			keepRaw(unparsed, key+"."+strconv.Itoa(i), b)
+		}
+	}
+	return names
+}
+
+func badgeName(raw json.RawMessage) (string, bool) {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s, s != ""
+	}
+	var o struct {
+		Type  string `json:"type"`
+		Title string `json:"title"`
+		Name  string `json:"name"`
+	}
+	if json.Unmarshal(raw, &o) != nil {
+		return "", false
+	}
+	for _, v := range []string{o.Type, o.Title, o.Name} {
+		if v != "" {
+			return v, true
+		}
+	}
+	return "", false
 }
 
 // itemPricing is the page's price breakdown (pricingServices), the same
@@ -212,11 +265,12 @@ func (c *Client) parseItemPage(raw []byte, id int64) (Item, error) {
 	if err := rsc.decode(holder, &side); err != nil {
 		return Item{}, &Error{Kind: KindAPIChanged, Endpoint: endpoint, Body: "decode: " + err.Error(), Msg: "vinted's item page changed shape; the cli cannot read it"}
 	}
+	price := side.Price.V
 	it := Item{
 		ID:         int64(side.ID),
 		Title:      side.Title,
-		Price:      side.Price.amount(),
-		Currency:   side.Price.currency(),
+		Price:      price.amount(),
+		Currency:   price.currency(),
 		CategoryID: int(side.CatalogID),
 		SellerID:   int64(side.SellerID),
 		Reserved:   side.IsReserved,
@@ -224,26 +278,48 @@ func (c *Client) parseItemPage(raw []byte, id int64) (Item, error) {
 		CanBuy:     side.CanBuy,
 		URL:        c.absURL("", id),
 	}
+	keepRaw(&it.Unparsed, "price", side.Price.Raw)
+	keepRaw(&it.Unparsed, "photos", side.Photos.Raw)
+	keepRaw(&it.Unparsed, "brand_dto", side.BrandDTO.Raw)
+	keepRaw(&it.Unparsed, "plugins", side.Plugins.Raw)
 	if it.Currency == "" {
 		it.Currency = side.Currency
 	}
-	for _, p := range side.Photos {
+	for _, p := range side.Photos.V {
 		if p.URL == "" {
 			continue
 		}
 		it.Images = append(it.Images, p.URL)
 		it.Photos = append(it.Photos, ItemPhoto{URL: p.URL, OriginalWidth: p.Width, OriginalHeight: p.Height, Main: p.IsMain, DominantColor: p.DominantColor})
 	}
-	if side.BrandDTO != nil {
-		it.Brand, it.BrandID = side.BrandDTO.Title, int(side.BrandDTO.ID)
+	if b := side.BrandDTO.V; b != nil {
+		it.Brand, it.BrandID = b.Title, int(b.ID)
 	}
 	seller := &ItemSeller{ID: it.SellerID, Business: side.Business}
-	for _, p := range side.Plugins {
+	for i, p := range side.Plugins.V {
+		key := "plugins." + p.Name
+		if _, dup := it.Unparsed[key]; dup || p.Name == "" {
+			key += "." + strconv.Itoa(i)
+		}
+		// unparsed keeps a plugin's data whole when its schema did not match.
+		unparsed := func(err error) bool {
+			if err != nil {
+				keepRaw(&it.Unparsed, key, p.Data)
+			}
+			return err != nil
+		}
 		switch p.Name {
 		case "description":
-			it.Description = p.Data.Description
+			var d descriptionPlugin
+			if !unparsed(json.Unmarshal(p.Data, &d)) {
+				it.Description = d.Description
+			}
 		case "attributes":
-			for _, a := range p.Data.Attributes {
+			var d attributesPlugin
+			if unparsed(json.Unmarshal(p.Data, &d)) {
+				continue
+			}
+			for _, a := range d.Attributes {
 				it.Attributes = append(it.Attributes, ItemAttribute{Code: a.Code, Title: a.Data.Title, Value: a.Data.Value})
 				switch a.Code {
 				case "size":
@@ -261,12 +337,17 @@ func (c *Client) parseItemPage(raw []byte, id int64) (Item, error) {
 				}
 			}
 		case "user_info_header":
-			it.SellerLogin = p.Data.Name
-			seller.Login, seller.Business = p.Data.Name, p.Data.Business
-			seller.Reviews = p.Data.FeedbackCount
+			var d userInfoHeaderPlugin
+			if unparsed(json.Unmarshal(p.Data, &d)) {
+				continue
+			}
+			it.SellerLogin = d.Name
+			seller.Login, seller.Business = d.Name, d.Business
+			seller.Reviews = int(d.FeedbackCount)
 			// The web app draws feedback_reputation (0-1) as round(5*r, 2) stars.
-			seller.Rating = math.Round(p.Data.FeedbackReputation*5*100) / 100
-			for _, ui := range p.Data.UserInfo {
+			seller.Rating = math.Round(float64(d.FeedbackReputation)*5*100) / 100
+			keepRaw(&it.Unparsed, key+".user_info", d.UserInfo.Raw)
+			for _, ui := range d.UserInfo.V {
 				if ui.Text == "" {
 					continue
 				}
@@ -275,17 +356,25 @@ func (c *Client) parseItemPage(raw []byte, id int64) (Item, error) {
 					seller.LastSeen = ui.Text
 				}
 			}
+			seller.Badges = addBadges(seller.Badges, d.Badges, key+".badges", &it.Unparsed)
 		case "seller_badges_info":
-			for _, b := range p.Data.Badges {
-				if b.Type != "" {
-					seller.Badges = append(seller.Badges, b.Type)
-				}
+			var d sellerBadgesPlugin
+			if !unparsed(json.Unmarshal(p.Data, &d)) {
+				seller.Badges = addBadges(seller.Badges, d.Badges, key+".badges", &it.Unparsed)
 			}
 		case "buyer_item_status":
 			// The status banner replaces the buy buttons. Reserved and hidden
 			// items carry their own flags; any other status means sold.
 			if !it.Reserved && !it.Hidden {
 				it.Sold = true
+			}
+		case "breadcrumbs", "favourite", "shipping", "summary":
+			// Placeholders: their content is read from the page's own
+			// objects below (breadcrumbs, favourites, pricing).
+		default:
+			// A block the cli has no reader for still reaches the output.
+			if len(p.Data) > 0 && string(p.Data) != "null" {
+				keepRaw(&it.Unparsed, key, p.Data)
 			}
 		}
 	}
@@ -393,7 +482,15 @@ func (c *Client) Photo(ctx context.Context, rawURL string) ([]byte, string, erro
 		}
 	}
 	c.debugf("> GET %s", c.redact(u.String()))
-	resp, err := c.HTTP.Do(req)
+	// The image CDN carries no cookies, so it may redirect within its host.
+	cdn := *c.HTTP
+	cdn.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxRedirects || req.URL.Host != via[0].URL.Host {
+			return http.ErrUseLastResponse
+		}
+		return nil
+	}
+	resp, err := cdn.Do(req)
 	if err != nil {
 		return nil, "", c.netError(endpoint, err)
 	}
@@ -406,7 +503,7 @@ func (c *Client) Photo(ctx context.Context, rawURL string) ([]byte, string, erro
 	// The CDN answers a bad or expired signature with a plain 403, which is
 	// not the bot protection; only a challenge page or a rate limit is.
 	if resp.StatusCode == http.StatusTooManyRequests || isBotWall(raw) {
-		return nil, "", c.blocked(endpoint, response{status: resp.StatusCode, header: resp.Header, raw: raw})
+		return nil, "", c.blocked(ctx, endpoint, response{status: resp.StatusCode, header: resp.Header, raw: raw})
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, "", c.statusError(endpoint, resp.StatusCode, raw)

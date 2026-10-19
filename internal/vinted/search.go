@@ -2,6 +2,7 @@ package vinted
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"regexp"
 	"sort"
@@ -110,28 +111,35 @@ func (p SearchParams) query() (url.Values, error) {
 	return q, nil
 }
 
-// catalogProduct is one entry of the catalog page's "items" list.
+// catalogProduct is one entry of the catalog page's "items" list. Only the
+// ids are core; every other part is lenient so one odd field keeps the item.
 type catalogProduct struct {
-	ID          flexInt `json:"id"`
-	ProductItem struct {
-		ID             flexInt    `json:"id"`
-		Title          string     `json:"title"`
-		URL            string     `json:"url"`
-		FavouriteCount int        `json:"favouriteCount"`
-		Price          *rawMoney  `json:"price"`
-		TotalItemPrice *rawMoney  `json:"totalItemPrice"`
-		IsPromoted     bool       `json:"isPromoted"`
-		IsFavourite    bool       `json:"isFavourite"`
-		ThumbnailURLs  []string   `json:"thumbnailUrls"`
-		Photos         []rawPhoto `json:"photos"`
-		User           struct {
-			ID flexInt `json:"id"`
-		} `json:"user"`
-		ItemBox struct {
-			FirstLine  string `json:"firstLine"`
-			SecondLine string `json:"secondLine"`
-		} `json:"itemBox"`
-	} `json:"productItem"`
+	ID          flexInt                     `json:"id"`
+	ProductItem lenient[catalogProductItem] `json:"productItem"`
+}
+
+type catalogProductItem struct {
+	ID             flexInt                 `json:"id"`
+	Title          lenient[string]         `json:"title"`
+	URL            lenient[string]         `json:"url"`
+	FavouriteCount flexInt                 `json:"favouriteCount"`
+	Price          lenient[*rawMoney]      `json:"price"`
+	TotalItemPrice lenient[*rawMoney]      `json:"totalItemPrice"`
+	IsPromoted     lenient[bool]           `json:"isPromoted"`
+	IsFavourite    lenient[bool]           `json:"isFavourite"`
+	ThumbnailURLs  lenient[[]string]       `json:"thumbnailUrls"`
+	Photos         lenient[[]rawPhoto]     `json:"photos"`
+	User           lenient[catalogUser]    `json:"user"`
+	ItemBox        lenient[catalogItemBox] `json:"itemBox"`
+}
+
+type catalogUser struct {
+	ID flexInt `json:"id"`
+}
+
+type catalogItemBox struct {
+	FirstLine  string `json:"firstLine"`
+	SecondLine string `json:"secondLine"`
 }
 
 func (c *Client) parseCatalogPage(raw []byte) (SearchPage, error) {
@@ -149,47 +157,66 @@ func (c *Client) parseCatalogPage(raw []byte) (SearchPage, error) {
 	if holder == nil {
 		return SearchPage{}, c.pageShapeError("GET /catalog", raw)
 	}
+	// Each entry is lenient on its own: an entry of another shape (an ad
+	// slot, a new widget) is kept raw instead of failing the page.
 	var data struct {
-		Items      []catalogProduct `json:"items"`
-		Pagination rawPagination    `json:"pagination"`
+		Items      []lenient[catalogProduct] `json:"items"`
+		Pagination lenient[rawPagination]    `json:"pagination"`
 	}
 	if err := rsc.decode(holder, &data); err != nil {
 		return SearchPage{}, &Error{Kind: KindAPIChanged, Endpoint: "GET /catalog", Body: "decode: " + err.Error(), Msg: "vinted's catalog page changed shape; the cli cannot read it"}
 	}
-	out := SearchPage{Items: make([]Item, 0, len(data.Items)), Page: data.Pagination.CurrentPage, TotalPages: data.Pagination.TotalPages, Total: data.Pagination.TotalEntries}
-	for _, ci := range data.Items {
-		out.Items = append(out.Items, c.catalogItem(ci))
+	pg := data.Pagination.V
+	out := SearchPage{Items: make([]Item, 0, len(data.Items)), Page: pg.CurrentPage, TotalPages: pg.TotalPages, Total: pg.TotalEntries}
+	keepRaw(&out.Unparsed, "pagination", data.Pagination.Raw)
+	for i, ci := range data.Items {
+		if ci.Raw != nil {
+			keepRaw(&out.Unparsed, "items."+strconv.Itoa(i), ci.Raw)
+			continue
+		}
+		out.Items = append(out.Items, c.catalogItem(ci.V))
 	}
 	return out, nil
 }
 
 func (c *Client) catalogItem(ci catalogProduct) Item {
-	p := ci.ProductItem
+	p := ci.ProductItem.V
 	id := int64(p.ID)
 	if id == 0 {
 		id = int64(ci.ID)
 	}
-	size, condition := splitSecondLine(p.ItemBox.SecondLine)
-	images := photoURLs(p.Photos)
+	box := p.ItemBox.V
+	size, condition := splitSecondLine(box.SecondLine)
+	images := photoURLs(p.Photos.V)
 	if len(images) == 0 {
-		images = p.ThumbnailURLs
+		images = p.ThumbnailURLs.V
 	}
-	return Item{
+	price, total := p.Price.V, p.TotalItemPrice.V
+	it := Item{
 		ID:         id,
-		Title:      p.Title,
-		Price:      p.Price.amount(),
-		Currency:   p.Price.currency(),
-		TotalPrice: p.TotalItemPrice.amount(),
-		Brand:      p.ItemBox.FirstLine,
+		Title:      p.Title.V,
+		Price:      price.amount(),
+		Currency:   price.currency(),
+		TotalPrice: total.amount(),
+		Brand:      box.FirstLine,
 		Size:       size,
 		Condition:  condition,
-		SellerID:   int64(p.User.ID),
-		Favorites:  p.FavouriteCount,
-		Favorited:  p.IsFavourite,
-		Promoted:   p.IsPromoted,
+		SellerID:   int64(p.User.V.ID),
+		Favorites:  int(p.FavouriteCount),
+		Favorited:  p.IsFavourite.V,
+		Promoted:   p.IsPromoted.V,
 		Images:     images,
-		URL:        c.absURL(p.URL, id),
+		URL:        c.absURL(p.URL.V, id),
 	}
+	keepRaw(&it.Unparsed, "productItem", ci.ProductItem.Raw)
+	for key, raw := range map[string]json.RawMessage{
+		"title": p.Title.Raw, "url": p.URL.Raw, "price": p.Price.Raw, "totalItemPrice": p.TotalItemPrice.Raw,
+		"isPromoted": p.IsPromoted.Raw, "isFavourite": p.IsFavourite.Raw, "thumbnailUrls": p.ThumbnailURLs.Raw,
+		"photos": p.Photos.Raw, "user": p.User.Raw, "itemBox": p.ItemBox.Raw,
+	} {
+		keepRaw(&it.Unparsed, "productItem."+key, raw)
+	}
+	return it
 }
 
 // absURL turns a site-relative path into a link on the client's domain.

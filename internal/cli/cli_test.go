@@ -3,8 +3,12 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -12,7 +16,112 @@ import (
 	"time"
 
 	"github.com/Microck/vinted-cli/internal/cli"
+	"github.com/Microck/vinted-cli/internal/galleton"
+	"github.com/Microck/vinted-cli/internal/galleton/bundle"
 )
+
+// TestMain lets the test binary act as the CLI's session host: the CLI starts
+// the bundled Galleton daemon by re-executing itself, which here is this
+// binary. Every logged-in test runs the real pinned daemon against the fake.
+func TestMain(m *testing.M) {
+	if handled, err := galleton.HandleHost(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	code := m.Run()
+	if engineDir != "" {
+		os.RemoveAll(engineDir)
+	}
+	os.Exit(code)
+}
+
+// buildEnv is the environment the tests started with: harnesses replace
+// HOME, which would otherwise move Go's module and build caches.
+var buildEnv = os.Environ()
+
+var (
+	engineOnce sync.Once
+	engineDir  string
+	enginePath string
+	engineErr  error
+)
+
+// sourceEngine builds the pinned daemon once per test run, the way a plain
+// `go install` of the CLI prepares it on first use. Bundled test runs
+// (-tags galleton_bundle) extract the embedded engine instead.
+func sourceEngine(t *testing.T) string {
+	t.Helper()
+	engineOnce.Do(func() {
+		download := exec.Command("go", "mod", "download", "-json", bundle.Module+"@"+bundle.Version)
+		download.Env = buildEnv
+		var out []byte
+		out, engineErr = download.Output()
+		if engineErr != nil {
+			return
+		}
+		var mod struct{ Dir string }
+		if engineErr = json.Unmarshal(out, &mod); engineErr != nil {
+			return
+		}
+		if engineDir, engineErr = os.MkdirTemp("", "vinted-engine-"); engineErr != nil {
+			return
+		}
+		enginePath = filepath.Join(engineDir, "galleton")
+		cmd := exec.Command("go", "build", "-trimpath", "-buildvcs=false", "-o", enginePath, "./cmd/galleton")
+		cmd.Dir = mod.Dir
+		cmd.Env = append(buildEnv, "GOWORK=off", "GOFLAGS=", "CGO_ENABLED=0")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			engineErr = fmt.Errorf("%v: %s", err, out)
+		}
+	})
+	if engineErr != nil {
+		t.Fatalf("building the pinned session engine: %v", engineErr)
+	}
+	return enginePath
+}
+
+// seedEngine places the prepared engine where the CLI's source-build path
+// caches it, with its checksum, so no test rebuilds it.
+func seedEngine(t *testing.T, stateDir string) {
+	t.Helper()
+	if len(bundle.Binary) > 0 {
+		return
+	}
+	src := sourceEngine(t)
+	bin := filepath.Join(stateDir, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{filepath.Dir(stateDir), stateDir, bin} {
+		_ = os.Chmod(d, 0o700)
+	}
+	dst := filepath.Join(bin, "galleton-"+bundle.Version)
+	if err := os.Link(src, dst); err != nil {
+		in, err := os.Open(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer in.Close()
+		out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o700)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.Copy(out, in); err != nil {
+			t.Fatal(err)
+		}
+		out.Close()
+	}
+	raw, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst+".sha256", []byte(fmt.Sprintf("%x\n", sha256.Sum256(raw))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
 
 // harness drives the CLI through its entrypoint against a fake Vinted with
 // an isolated XDG home. Every test goes through here; the only reach into
@@ -73,12 +182,33 @@ func newHarness(t *testing.T) *harness {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 	t.Setenv("HOME", home)
 	t.Setenv("VINTED_PROFILE", "")
-	t.Setenv("VINTED_COOKIES", "")
 	t.Setenv("VINTED_CONFIG", "")
+	for _, k := range []string{"VINTED_GALLETON_DIR", "VINTED_GALLETON_URL", "VINTED_GALLETON_TOKEN_FILE"} {
+		t.Setenv(k, "")
+	}
 	t.Setenv("VINTED_BASE_URL", fake.srv.URL)
 	t.Setenv("VINTED_NO_UPDATE_CHECK", "1")
 	t.Setenv("NO_COLOR", "")
-	return &harness{t: t, fake: fake, home: home, clock: clock}
+	h := &harness{t: t, fake: fake, home: home, clock: clock}
+	seedEngine(t, h.engineDir())
+	// Stop the daemon a test started before its directory is removed. Every
+	// CLI invocation has released its lease by now.
+	t.Cleanup(func() {
+		if _, err := os.Stat(h.engineDir()); err != nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := galleton.Stop(ctx, h.engineDir()); err != nil {
+			t.Errorf("stopping the session engine: %v", err)
+		}
+	})
+	return h
+}
+
+// engineDir is the bundled session engine's private state directory.
+func (h *harness) engineDir() string {
+	return filepath.Join(h.home, "config", "vinted-cli", "galleton")
 }
 
 type result struct {
@@ -151,20 +281,20 @@ type eventOut struct {
 	Change map[string]any `json:"change"`
 }
 
-func TestLoginImportsCookiesRefreshesAndProtectsCredentials(t *testing.T) {
+func TestLoginImportsIntoTheEngineAndKeepsNoCookies(t *testing.T) {
 	h := newHarness(t)
-	r := h.login("--profile", "test")
+	r := h.login("--profile", "test", "--domain", "vinted.fr")
 	st := decode[map[string]any](t, r.stdout)
-	if st["logged_in"] != true || st["profile"] != "test" || st["account"] != fixtureLogin || st["user_id"] != float64(fakeUserID) {
+	if st["logged_in"] != true || st["profile"] != "test" || st["account"] != fixtureLogin || st["user_id"] != float64(fakeUserID) || st["source"] != "galleton" {
 		t.Fatalf("login status %v", st)
 	}
 	if st["domain"] != "www.vinted.fr" {
-		t.Errorf("site not taken from the cookie domain: %v", st["domain"])
+		t.Errorf("--domain not normalised: %v", st["domain"])
 	}
-	// The exported access token had expired, so login refreshed it, and the
-	// renewed token is what landed on disk.
-	if h.fake.refreshes != 1 {
-		t.Fatalf("refreshes = %d, want 1", h.fake.refreshes)
+	// The exported access token had expired, so the engine renewed right
+	// after the import, before the account read.
+	if n := h.fake.refreshCount(); n != 1 {
+		t.Fatalf("refreshes = %d, want 1", n)
 	}
 	info, err := os.Stat(h.credentialsFile())
 	if err != nil {
@@ -174,26 +304,49 @@ func TestLoginImportsCookiesRefreshesAndProtectsCredentials(t *testing.T) {
 		t.Fatalf("credentials mode %v, want 0600", info.Mode().Perm())
 	}
 	raw, _ := os.ReadFile(h.credentialsFile())
-	if !strings.Contains(string(raw), h.fake.access) {
-		t.Fatal("the refreshed access token was not persisted")
+	id, _ := st["session_id"].(string)
+	if !strings.Contains(string(raw), "galleton_id = '"+id+"'") || !strings.HasPrefix(id, "vinted-") {
+		t.Fatalf("credentials do not reference the engine session:\n%s", raw)
 	}
-	if strings.Contains(r.stdout+r.stderr, fakeRefresh) || strings.Contains(r.stdout+r.stderr, h.fake.access) {
-		t.Fatal("login printed a cookie value")
+	access, refresh := h.fake.tokens()
+	for _, secret := range []string{fakeRefresh, refresh, access, "datadome-cookie-value"} {
+		if strings.Contains(string(raw), secret) || strings.Contains(r.stdout+r.stderr, secret) {
+			t.Fatal("a cookie value reached credentials.toml or the output")
+		}
 	}
+	// The vault is encrypted: no cookie value appears in any engine file.
+	_ = filepath.Walk(h.engineDir(), func(path string, fi os.FileInfo, err error) error {
+		if err != nil || fi.IsDir() || filepath.Base(filepath.Dir(path)) == "bin" {
+			return nil
+		}
+		data, _ := os.ReadFile(path)
+		for _, secret := range []string{refresh, access, "datadome-cookie-value"} {
+			if bytes.Contains(data, []byte(secret)) {
+				t.Errorf("%s holds a cookie value in plain text", path)
+			}
+		}
+		return nil
+	})
 	cfg, _ := os.ReadFile(filepath.Join(h.home, "config", "vinted-cli", "config.toml"))
 	if strings.Contains(string(cfg), fakeRefresh) || !strings.Contains(string(cfg), `default_profile = 'test'`) {
 		t.Fatalf("config must name the first profile default and hold no secrets:\n%s", cfg)
 	}
-	// The first profile became the default, so no --profile is needed.
+	// The first profile became the default, so no --profile is needed, and
+	// a second process reuses the engine's rotated cookies.
 	me := decode[map[string]any](t, h.must("", "me", "show").stdout)
 	if me["login"] != fixtureLogin {
 		t.Fatalf("me show %v", me)
+	}
+	if n := h.fake.refreshCount(); n != 1 {
+		t.Fatalf("a valid session was renewed again: %d", n)
 	}
 }
 
 func TestLoginRejectsRevokedSessionWithAuthExit(t *testing.T) {
 	h := newHarness(t)
+	h.fake.mu.Lock()
 	h.fake.revoked = true
+	h.fake.mu.Unlock()
 	r := h.run("", "auth", "login", "--cookies", h.fake.cookieFile(t))
 	if r.code != 3 || !strings.Contains(r.stderr, "auth login") {
 		t.Fatalf("revoked session: exit %d %q", r.code, r.stderr)
@@ -208,8 +361,13 @@ func TestLoginInputErrorsAreUsageErrors(t *testing.T) {
 	if r := h.run("", "auth", "login"); r.code != 2 || !strings.Contains(r.stderr, "--cookies") {
 		t.Fatalf("no input: exit %d %q", r.code, r.stderr)
 	}
-	if r := h.run("foo=bar; baz=qux", "auth", "login", "--cookies-stdin"); r.code != 2 || !strings.Contains(r.stderr, "access_token_web") {
+	if r := h.run("foo=bar; baz=qux", "auth", "login", "--cookies-stdin"); r.code != 2 || !strings.Contains(r.stderr, "refresh_token_web") {
 		t.Fatalf("cookies without tokens: exit %d %q", r.code, r.stderr)
+	}
+	// Logins for two sites in one export: the profile's site must be named.
+	two := `[{"domain":".www.vinted.fr","name":"refresh_token_web","value":"synthetic-fr"},{"domain":".www.vinted.es","name":"refresh_token_web","value":"synthetic-es"}]`
+	if r := h.run(two, "auth", "login", "--cookies-stdin"); r.code != 2 || !strings.Contains(r.stderr, "--domain") {
+		t.Fatalf("two-site export: exit %d %q", r.code, r.stderr)
 	}
 }
 
@@ -220,14 +378,22 @@ func TestStatusRefreshAndLogout(t *testing.T) {
 	}
 	h.login()
 	st := decode[map[string]any](t, h.must("", "auth", "status", "--check").stdout)
-	if st["logged_in"] != true || st["session_valid"] != true || st["session_expires"] == nil {
+	engine, _ := st["engine"].(map[string]any)
+	if st["logged_in"] != true || st["session_valid"] != true || engine["status"] != "ready" || engine["access_expires"] == nil {
 		t.Fatalf("status %v", st)
 	}
-	before := h.fake.refreshes
-	h.must("", "auth", "refresh")
-	if h.fake.refreshes != before+1 {
+	before := h.fake.refreshCount()
+	refreshed := decode[map[string]any](t, h.must("", "auth", "refresh").stdout)
+	if h.fake.refreshCount() != before+1 {
 		t.Fatal("auth refresh did not call the refresh endpoint")
 	}
+	if e, _ := refreshed["engine"].(map[string]any); e["last_refresh"] == nil {
+		t.Fatalf("refresh status %v", refreshed)
+	}
+	// The rotated refresh token survives in the engine: a second renewal
+	// works, so nothing replayed the spent one.
+	h.must("", "auth", "refresh")
+	h.must("", "me", "show")
 	h.must("", "auth", "logout")
 	if r := h.run("", "me", "show"); r.code != 3 {
 		t.Fatalf("me show after logout: exit %d", r.code)
@@ -238,40 +404,50 @@ func TestStatusRefreshAndLogout(t *testing.T) {
 	}
 }
 
-// A token the server stopped accepting is refreshed on the 401 and the new
-// one is written back, so the next process starts with it.
-func TestServerSideExpiryRefreshesAndPersists(t *testing.T) {
+// A token the server stopped accepting is renewed by the engine on the 401,
+// and the next process uses the renewed one without renewing again.
+func TestServerSideExpiryRenewsThroughTheEngine(t *testing.T) {
 	h := newHarness(t)
 	h.login()
 	h.fake.mu.Lock()
-	old := h.fake.access
 	h.fake.access = "" // the server forgets every token it handed out
 	h.fake.mu.Unlock()
-	// The 401 triggers a refresh, which mints a token the server accepts.
+	before := h.fake.refreshCount()
 	h.must("", "me", "show")
-	raw, _ := os.ReadFile(h.credentialsFile())
-	if strings.Contains(string(raw), old) || !strings.Contains(string(raw), h.fake.access) {
-		t.Fatal("the refreshed token was not persisted")
+	if h.fake.refreshCount() != before+1 {
+		t.Fatal("the 401 did not renew the session")
+	}
+	h.must("", "me", "show")
+	if h.fake.refreshCount() != before+1 {
+		t.Fatal("the renewed token was not kept for the next process")
 	}
 }
 
-func TestEnvCookiesAreUsedButNeverPersisted(t *testing.T) {
+// A profile saved by an older version, with its cookie jar in
+// credentials.toml, is never used: it needs a new login.
+func TestLegacyCookieProfileNeedsLogin(t *testing.T) {
 	h := newHarness(t)
-	h.fake.mu.Lock()
-	h.fake.access = jwtFor(t)
-	tok := h.fake.access
-	h.fake.mu.Unlock()
-	t.Setenv("VINTED_COOKIES", "access_token_web="+tok+"; refresh_token_web="+fakeRefresh)
-	me := decode[map[string]any](t, h.must("", "me", "show").stdout)
-	if me["login"] != fixtureLogin {
-		t.Fatalf("me show %v", me)
+	legacy := "[profiles.default]\nuser_id = 3000000001\nlogin = 'sample_me'\n[profiles.default.cookies]\nrefresh_token_web = 'legacy-refresh-token-value'\n"
+	if err := os.MkdirAll(filepath.Dir(h.credentialsFile()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(h.credentialsFile(), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	st := decode[map[string]any](t, h.must("", "auth", "status").stdout)
-	if st["source"] != "env VINTED_COOKIES" {
-		t.Fatalf("status source %v", st["source"])
+	if st["logged_in"] != false || st["needs_login"] != true {
+		t.Fatalf("legacy status %v", st)
 	}
-	if _, err := os.Stat(h.credentialsFile()); err == nil {
-		t.Fatal("env cookies were written to disk")
+	if r := h.run("", "me", "show"); r.code != 3 || !strings.Contains(r.stderr, "older vinted-cli") {
+		t.Fatalf("legacy profile used: exit %d %q", r.code, r.stderr)
+	}
+	if n := h.fake.requestCount(); n != 0 {
+		t.Fatalf("a legacy profile sent %d requests", n)
+	}
+	h.login()
+	raw, _ := os.ReadFile(h.credentialsFile())
+	if strings.Contains(string(raw), "legacy-refresh-token-value") {
+		t.Fatal("login kept the legacy cookie jar")
 	}
 }
 
@@ -285,7 +461,8 @@ func TestDebugRedactsCookies(t *testing.T) {
 	if !strings.Contains(r.stderr, "/api/v2/users/current") {
 		t.Fatalf("debug log missing requests: %q", r.stderr)
 	}
-	for _, secret := range []string{fakeRefresh, h.fake.access, "datadome-cookie-value"} {
+	access, refresh := h.fake.tokens()
+	for _, secret := range []string{fakeRefresh, refresh, access, "datadome-cookie-value"} {
 		if strings.Contains(r.stderr, secret) {
 			t.Fatal("debug output leaked a cookie value")
 		}

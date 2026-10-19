@@ -5,6 +5,8 @@ project_name: vinted
 before:
   hooks:
     - go mod tidy
+    # Older source tags (manual release retries) have no session engine.
+    - sh -c 'test ! -d cmd/bundle-galleton || go run ./cmd/bundle-galleton -all'
 
 builds:
   - id: vinted
@@ -12,6 +14,7 @@ builds:
     # names the binary vinted, not vinted-cli.
     main: ./cmd/vinted
     binary: vinted
+    tags: [galleton_bundle]
     env:
       - CGO_ENABLED=0
     goos: [linux, darwin, windows]

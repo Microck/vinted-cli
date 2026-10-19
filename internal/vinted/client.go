@@ -24,11 +24,6 @@ import (
 // DefaultBase is the site used when neither the profile nor VINTED_BASE_URL names one.
 const DefaultBase = "https://www.vinted.com"
 
-// TokenSource hands out a valid access token; Session implements it.
-type TokenSource interface {
-	AccessToken(ctx context.Context) (string, error)
-}
-
 type Client struct {
 	// Base is the Vinted site the profile belongs to (https://www.vinted.fr,
 	// https://www.vinted.es, ...). Sessions are per domain.
@@ -39,17 +34,21 @@ type Client struct {
 	Debug io.Writer
 	// Notice receives one-off human hints.
 	Notice func(string)
-	// Session is the logged-in cookie jar; nil runs anonymously.
-	Session *Session
+	// Account is the logged-in session; nil runs on a guest jar.
+	Account Account
 	// Gate guards every request (cooldown, pacing, budget); see Gate.
 	Gate Gate
 	// Tokens caches the CSRF token and guest jar across processes; nil keeps
 	// them for this process only.
 	Tokens TokenCache
+	// PauseSessions, when set, stops the session engine's requests and
+	// renewals for the site for d after a block, whether or not this client
+	// is logged in: another profile's session renews from the same egress.
+	PauseSessions func(ctx context.Context, d time.Duration) error
 
 	mu            sync.Mutex
 	redactStrings []string
-	anon          *Session
+	anon          *guest
 	csrf          string
 	csrfCached    bool   // csrf came from Tokens, not from a page this process loaded
 	proxy         string // the proxy every request goes through, without credentials
@@ -65,17 +64,9 @@ func New() *Client {
 		HTTP: &http.Client{Timeout: 20 * time.Second},
 		Base: envOr("VINTED_BASE_URL", DefaultBase),
 	}
-	// Cookies are managed by Session, never by a jar on the http.Client, so a
-	// redirect must not silently carry them to another host.
-	c.HTTP.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 {
-			return errors.New("too many redirects")
-		}
-		if len(via) > 0 && req.URL.Host != via[0].URL.Host {
-			return http.ErrUseLastResponse
-		}
-		return nil
-	}
+	// send follows redirects itself, the same way for the guest jar and the
+	// Account, so cookies never travel to another host.
+	c.HTTP.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	return c
 }
 
@@ -126,11 +117,11 @@ type request struct {
 	csrf bool
 	// html asks for a server-rendered page instead of JSON.
 	html bool
-	// noToken sends the jar as is, without asking the Session for a fresh
-	// access token first (the refresh call itself, the anonymous bootstrap).
+	// noToken sends the guest jar as is, without minting a fresh guest
+	// token first (the bootstrap itself).
 	noToken bool
-	// session overrides which jar is sent (the anonymous bootstrap).
-	session *Session
+	// guest overrides which guest jar is sent (the bootstrap).
+	guest *guest
 	// gateway sends the call to Vinted's API gateway (api.www.vinted.com,
 	// api.vinted.fr, ...) instead of the site, the host the web app uses
 	// for the newer services (saved searches, shipping estimation).
@@ -155,30 +146,45 @@ type response struct {
 
 // do performs one call, decodes JSON into out (may be nil) and classifies
 // failures into *Error so the CLI can map them to exit codes. It returns the
-// raw body for HTML callers. A 401 is retried once after refreshing the
-// access token, since Vinted's tokens live about an hour, and a 403 on a
-// cached CSRF token once with a freshly scraped one. A block is never
-// retried: it records the cooldown and ends the command.
+// raw body for HTML callers. A 401 is retried once after renewing the access
+// token (the Account's, or a new guest token), since Vinted's tokens live
+// about an hour, and a 403 on a cached CSRF token once with a freshly scraped
+// one. A block is never retried: it records the cooldown, pauses the
+// Account, and ends the command.
 func (c *Client) do(ctx context.Context, r request, out any) ([]byte, error) {
 	endpoint := r.method + " " + r.path
-	s := r.session
-	if s == nil {
+	g := r.guest
+	if c.Account == nil && g == nil {
+		if r.auth {
+			return nil, &Error{Kind: KindAuth, Msg: "this command needs a logged-in profile. Run `vinted auth login`"}
+		}
 		var err error
-		if s, err = c.jar(ctx, r.auth); err != nil {
+		if g, err = c.guestJar(ctx); err != nil {
 			return nil, err
 		}
 	}
-	resp, err := c.send(ctx, r, s)
+	resp, err := c.send(ctx, r, g)
 	if err != nil {
 		return nil, err
 	}
 	if isBlock(resp.status, resp.raw) {
-		return resp.raw, c.blocked(endpoint, resp)
+		return resp.raw, c.blocked(ctx, endpoint, resp)
 	}
 	retry := false
 	switch {
-	case resp.status == http.StatusUnauthorized && !r.noToken && s != nil:
-		if err := s.Refresh(ctx); err != nil {
+	case resp.status == http.StatusUnauthorized && !r.noToken:
+		if c.Account != nil {
+			// The renewal is a request to Vinted of its own: gate it.
+			if c.Gate != nil {
+				if err := c.Gate.Wait(ctx); err != nil {
+					return nil, err
+				}
+			}
+			err = c.Account.Renew(ctx)
+		} else {
+			err = g.bootstrap(ctx)
+		}
+		if err != nil {
 			return nil, err
 		}
 		retry = true
@@ -188,11 +194,11 @@ func (c *Client) do(ctx context.Context, r request, out any) ([]byte, error) {
 		retry = true
 	}
 	if retry {
-		if resp, err = c.send(ctx, r, s); err != nil {
+		if resp, err = c.send(ctx, r, g); err != nil {
 			return nil, err
 		}
 		if isBlock(resp.status, resp.raw) {
-			return resp.raw, c.blocked(endpoint, resp)
+			return resp.raw, c.blocked(ctx, endpoint, resp)
 		}
 	}
 	raw, status := resp.raw, resp.status
@@ -207,27 +213,19 @@ func (c *Client) do(ctx context.Context, r request, out any) ([]byte, error) {
 	return raw, nil
 }
 
-// jar picks the cookies a request carries: the logged-in Session, or an
-// anonymous one, because even public /api/v2 reads need an (anonymous)
-// access token. The guest jar comes from Tokens while its token is fresh and
-// is otherwise minted from the home page and cached for the next command.
-func (c *Client) jar(ctx context.Context, auth bool) (*Session, error) {
-	if c.Session != nil {
-		return c.Session, nil
-	}
-	if auth {
-		return nil, &Error{Kind: KindAuth, Msg: "this command needs a logged-in profile. Run `vinted auth login`"}
-	}
+// guestJar is the anonymous jar public reads run on without an Account. It
+// comes from Tokens while its token is fresh and is otherwise minted from
+// the home page and cached for the next command.
+func (c *Client) guestJar(ctx context.Context) (*guest, error) {
 	c.mu.Lock()
-	anon := c.anon
+	g := c.anon
 	c.mu.Unlock()
-	if anon != nil {
-		return anon, nil
+	if g != nil {
+		return g, nil
 	}
-	anon = &Session{Cookies: map[string]string{}, client: c, anonymous: true}
+	g = &guest{client: c, cookies: map[string]string{}}
 	if c.Tokens != nil {
-		anon.OnRotate = func(map[string]string, time.Time) {
-			jar, exp := anon.snapshot()
+		g.onChange = func(jar map[string]string, exp time.Time) {
 			if err := c.Tokens.SaveGuest(jar, exp); err != nil {
 				c.debugf("! could not cache the guest session: %v", err)
 			}
@@ -235,26 +233,27 @@ func (c *Client) jar(ctx context.Context, auth bool) (*Session, error) {
 		if cached := c.Tokens.Guest(); cached[AccessCookie] != "" {
 			for k, v := range cached {
 				c.redactCookie(v)
-				anon.Cookies[k] = v
+				g.cookies[k] = v
 			}
-			anon.Expires = jwtExpiry(cached[AccessCookie])
+			g.expires = jwtExpiry(cached[AccessCookie])
 		}
 	}
-	if anon.Cookies[AccessCookie] == "" {
-		if err := anon.bootstrap(ctx); err != nil {
-			return nil, err
-		}
+	if err := g.ensure(ctx); err != nil {
+		return nil, err
 	}
 	c.mu.Lock()
 	if c.anon == nil {
-		c.anon = anon
+		c.anon = g
 	}
-	anon = c.anon
+	g = c.anon
 	c.mu.Unlock()
-	return anon, nil
+	return g, nil
 }
 
-func (c *Client) send(ctx context.Context, r request, s *Session) (response, error) {
+// maxRedirects bounds the same-host redirects send follows.
+const maxRedirects = 5
+
+func (c *Client) send(ctx context.Context, r request, g *guest) (response, error) {
 	endpoint := r.method + " " + r.path
 	base := c.Base
 	if r.gateway {
@@ -264,41 +263,34 @@ func (c *Client) send(ctx context.Context, r request, s *Session) (response, err
 	if len(r.query) > 0 {
 		u += "?" + r.query.Encode()
 	}
-	var rd io.Reader
+	body := r.raw
 	contentType := r.contentType
-	switch {
-	case r.raw != nil:
-		rd = bytes.NewReader(r.raw)
-	case r.body != nil:
+	if r.raw == nil && r.body != nil {
 		b, err := json.Marshal(r.body)
 		if err != nil {
 			return response{}, err
 		}
-		rd = bytes.NewReader(b)
-		contentType = "application/json"
+		body, contentType = b, "application/json"
 	}
-	if s != nil && !r.noToken {
-		if _, err := s.AccessToken(ctx); err != nil {
+	if g != nil && !r.noToken {
+		if err := g.ensure(ctx); err != nil {
 			return response{}, err
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, r.method, u, rd)
-	if err != nil {
-		return response{}, err
-	}
-	c.browserHeaders(req.Header, r.method, r.html, r.gateway)
+	header := http.Header{}
+	c.browserHeaders(header, r.method, r.html, r.gateway)
 	if !r.html {
-		req.Header.Set("Platform", "web")
+		header.Set("Platform", "web")
 	}
 	if contentType != "" {
-		req.Header.Set("Content-Type", contentType)
+		header.Set("Content-Type", contentType)
 	}
 	if r.gateway {
 		// The gateway answers 400 BAD_REQUEST without a Locale header.
-		req.Header.Set("Locale", "en-US")
+		header.Set("Locale", "en-US")
 	}
 	for k, v := range r.header {
-		req.Header[k] = v
+		header[k] = v
 	}
 	var out response
 	if r.csrf {
@@ -306,38 +298,92 @@ func (c *Client) send(ctx context.Context, r request, s *Session) (response, err
 		if err != nil {
 			return response{}, err
 		}
-		req.Header.Set("X-CSRF-Token", tok)
+		header.Set("X-CSRF-Token", tok)
 		out.csrfCached = cached
 	}
-	if s != nil {
-		if h := s.cookieHeader(); h != "" {
-			req.Header.Set("Cookie", h)
+	method := r.method
+	for hop := 0; ; hop++ {
+		if g != nil {
+			if h := g.header(); h != "" {
+				header.Set("Cookie", h)
+			}
 		}
-	}
-	// The gate goes last, right before the wire: the token refresh and CSRF
-	// page above are requests of their own and have already passed it.
-	if c.Gate != nil {
-		if err := c.Gate.Wait(ctx); err != nil {
+		// The gate goes last, right before the wire: the guest token and CSRF
+		// page above are requests of their own and have already passed it.
+		if c.Gate != nil {
+			if err := c.Gate.Wait(ctx); err != nil {
+				return response{}, err
+			}
+		}
+		c.debugf("> %s %s", method, c.redact(u))
+		status, respHeader, raw, err := c.transport(ctx, endpoint, method, u, header, body)
+		if err != nil {
 			return response{}, err
 		}
+		c.debugf("< %d %s (%d bytes)", status, endpoint, len(raw))
+		out.status, out.header, out.raw = status, respHeader, raw
+		// A block page's cookies (a fresh datadome flag) must not replace the jar.
+		block := isBlock(status, raw)
+		if g != nil && !block {
+			g.absorb((&http.Response{Header: respHeader}).Cookies())
+		}
+		next, ok := redirectTarget(u, method, status, respHeader)
+		if block || !ok || hop == maxRedirects {
+			return out, nil
+		}
+		u, method, body = next, http.MethodGet, nil
+		header.Del("Content-Type")
+		header.Del("Origin")
 	}
-	c.debugf("> %s %s", r.method, c.redact(u))
+}
+
+// redirectTarget is where a same-host redirect of a GET or HEAD leads. Other
+// redirects are answered as they are, so cookies never follow a redirect to
+// another host and a mutation is never silently replayed as another request.
+func redirectTarget(current, method string, status int, h http.Header) (string, bool) {
+	if status < 300 || status > 399 || status == http.StatusNotModified || (method != http.MethodGet && method != http.MethodHead) {
+		return "", false
+	}
+	loc := h.Get("Location")
+	if loc == "" {
+		return "", false
+	}
+	from, err := url.Parse(current)
+	if err != nil {
+		return "", false
+	}
+	to, err := from.Parse(loc)
+	if err != nil || to.Host != from.Host || to.Scheme != from.Scheme {
+		return "", false
+	}
+	return to.String(), true
+}
+
+// transport puts one request on the wire: through the Account, which attaches
+// the account's cookies, or directly with the guest jar's.
+func (c *Client) transport(ctx context.Context, endpoint, method, u string, header http.Header, body []byte) (int, http.Header, []byte, error) {
+	if c.Account != nil {
+		return c.Account.Send(ctx, method, u, header, body)
+	}
+	var rd io.Reader
+	if body != nil {
+		rd = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, u, rd)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	req.Header = header.Clone()
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return response{}, c.netError(endpoint, err)
+		return 0, nil, nil, c.netError(endpoint, err)
 	}
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
-	resp.Body.Close()
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
 	if err != nil {
-		return response{}, c.netError(endpoint, err)
+		return 0, nil, nil, c.netError(endpoint, err)
 	}
-	c.debugf("< %d %s (%d bytes)", resp.StatusCode, endpoint, len(raw))
-	out.status, out.header, out.raw = resp.StatusCode, resp.Header, raw
-	// A block page's cookies (a fresh datadome flag) must not replace the jar.
-	if s != nil && !isBlock(resp.StatusCode, raw) {
-		s.absorb(resp.Cookies())
-	}
-	return out, nil
+	return resp.StatusCode, resp.Header, raw, nil
 }
 
 var csrfRe = regexp.MustCompile(`CSRF_TOKEN\\?"\s*:\s*\\?"([0-9A-Za-z_\-=+/]{16,})`)
@@ -384,8 +430,8 @@ func (c *Client) csrfToken(ctx context.Context) (tok string, cached bool, err er
 
 // csrfUser is the account the CSRF token is cached under; 0 for a guest.
 func (c *Client) csrfUser() int64 {
-	if c.Session != nil {
-		return c.Session.UserID()
+	if c.Account != nil {
+		return c.Account.UserID()
 	}
 	return 0
 }
@@ -462,31 +508,58 @@ func (c *Client) netError(endpoint string, err error) error {
 }
 
 // apiEnvelope is Vinted's error body: {"code":115,"message":"...","message_code":"user_verification_required"}.
-// Validation failures (code 99) list the offending fields in errors.
+// Validation failures (code 99) list the offending fields in errors. The
+// gateway's codes are strings ("BAD_REQUEST"), which read as 0 here; the raw
+// body always reaches the Error's Body.
 type apiEnvelope struct {
-	Code        int    `json:"code"`
-	Message     string `json:"message"`
-	MessageCode string `json:"message_code"`
-	Errors      []struct {
-		Field string `json:"field"`
-		Value string `json:"value"`
-	} `json:"errors"`
+	Code        flexInt                           `json:"code"`
+	Message     lenient[string]                   `json:"message"`
+	MessageCode lenient[string]                   `json:"message_code"`
+	Errors      lenient[[]lenient[apiFieldError]] `json:"errors"`
+}
+
+// apiFieldError is one entry of a validation envelope. Value is read as a
+// message or a list of messages; any other shape is shown as JSON.
+type apiFieldError struct {
+	Field string          `json:"field"`
+	Value json.RawMessage `json:"value"`
 }
 
 // fieldErrors renders a validation envelope's per-field messages.
 func (env apiEnvelope) fieldErrors() string {
-	parts := make([]string, 0, len(env.Errors))
-	for _, fe := range env.Errors {
+	parts := make([]string, 0, len(env.Errors.V))
+	for _, le := range env.Errors.V {
+		fe := le.V
+		value := fieldErrorText(fe.Value)
 		switch {
-		case fe.Field != "" && fe.Value != "":
-			parts = append(parts, fe.Field+": "+fe.Value)
-		case fe.Value != "":
-			parts = append(parts, fe.Value)
+		case fe.Field != "" && value != "":
+			parts = append(parts, fe.Field+": "+value)
+		case value != "":
+			parts = append(parts, value)
 		case fe.Field != "":
 			parts = append(parts, fe.Field)
+		case le.Raw != nil:
+			parts = append(parts, string(le.Raw))
 		}
 	}
 	return strings.Join(parts, "; ")
+}
+
+// fieldErrorText reads a validation message given as a string or a list of
+// strings, and shows any other shape as its JSON.
+func fieldErrorText(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var list []string
+	if json.Unmarshal(raw, &list) == nil {
+		return strings.Join(list, ", ")
+	}
+	return string(raw)
 }
 
 // statusError classifies a non-2xx answer from Vinted itself. Blocks never
@@ -496,41 +569,42 @@ func (c *Client) statusError(endpoint string, status int, raw []byte) error {
 	e := &Error{Status: status, Endpoint: endpoint, Body: c.snippet(raw)}
 	var env apiEnvelope
 	_ = json.Unmarshal(raw, &env)
-	e.APICode = env.Code
+	code, msg, msgCode := int(env.Code), env.Message.V, env.MessageCode.V
+	e.APICode = code
 	switch {
-	case env.MessageCode == "user_verification_required" || env.Code == 115:
+	case msgCode == "user_verification_required" || code == 115:
 		e.Kind = KindAuth
 		// The web app answers code 115 by sending the user to this page.
 		e.Msg = "vinted requires this account to be verified before it can use this feature. Open " + c.Base + "/users/verification while logged in, complete the verification it asks for, then retry"
 		e.Suggest = []string{"open " + c.Base + "/users/verification"}
-	case status == http.StatusUnauthorized || env.MessageCode == "invalid_authentication_token":
+	case status == http.StatusUnauthorized || msgCode == "invalid_authentication_token":
 		e.Kind = KindAuth
 		e.Msg = "vinted rejected the session. Run `vinted auth login` again"
 	case status == http.StatusForbidden:
 		e.Kind = KindGeneric
 		e.Msg = "vinted refused the request (HTTP 403)"
-		if env.Message != "" {
-			e.Msg = "vinted refused the request: " + env.Message
+		if msg != "" {
+			e.Msg = "vinted refused the request: " + msg
 		}
 	case status == http.StatusNotFound || status == http.StatusGone:
 		e.Kind = KindNotFound
 		e.Msg = "vinted has nothing at " + endpoint
-		if env.Message != "" {
-			e.Msg = env.Message
+		if msg != "" {
+			e.Msg = msg
 		}
 	case status >= 500:
 		e.Kind = KindGeneric
 		e.Retryable = true
 		e.Msg = fmt.Sprintf("vinted answered HTTP %d. Try again later", status)
-	case env.MessageCode == "validation_error" && len(env.Errors) > 0:
+	case msgCode == "validation_error" && len(env.Errors.V) > 0:
 		// The request's own fields were wrong: the caller can fix them.
 		e.Kind = KindUsage
 		e.Msg = "vinted rejected the input: " + env.fieldErrors()
 	case status == http.StatusBadRequest || status == http.StatusUnprocessableEntity || status == http.StatusConflict:
 		e.Kind = KindGeneric
 		e.Msg = fmt.Sprintf("vinted refused the request (HTTP %d)", status)
-		if env.Message != "" {
-			e.Msg = env.Message
+		if msg != "" {
+			e.Msg = msg
 		}
 	default:
 		e.Kind = KindAPIChanged

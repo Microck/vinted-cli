@@ -85,7 +85,7 @@ vinted doctor
 vinted keeps your login in browser cookies, so the cli imports them instead of asking for a password. email, google, apple, and facebook accounts all work the same way.
 
 1. log in on your vinted domain in your browser (www.vinted.com, www.vinted.fr, www.vinted.es, ...)
-2. export cookies for that site as a netscape/text file with an extension such as cookie-editor
+2. export cookies for that site with an extension such as cookie-editor (netscape `cookies.txt` or json; a whole-browser export works too)
 3. run `vinted auth login` and paste the file path, or pass `--cookies FILE`
 
 ```bash
@@ -102,14 +102,17 @@ vinted auth login --cookies cookies.txt --domain vinted.fr
 cat cookies.txt | vinted auth login --cookies-stdin
 ```
 
-the cli needs `access_token_web` and `refresh_token_web` from the export. the access token lives about an hour; the cli refreshes it automatically through vinted's own `refresh_token_web` flow and writes the new cookies back to `credentials.toml` (mode `0600`). vinted can still expire or revoke a session, so you may need to log in again.
+the cli needs `refresh_token_web` from the export (and normally `access_token_web` with it). `auth login` reads the export and hands it to the bundled [galleton](https://github.com/Microck/galleton) session engine, an encrypted vault next to `credentials.toml`; after that the cli never holds the cookies again. the engine renews the access token through vinted's own refresh endpoint before it expires, keeps the rotated cookies, and is the only thing that ever spends the single-use refresh token. after importing, log out of that browser session (or just log in again there): the browser still holds the refresh token the engine spends. vinted can still expire or revoke a session, so you may need to log in again.
 
 check session status or refresh by hand:
 
 ```bash
-vinted auth status
-vinted auth refresh
+vinted auth status            # local, offline
+vinted auth status --check    # asks the engine and vinted
+vinted auth refresh           # renew now
 ```
+
+the engine starts with the first command that needs the account and stops ten seconds after the last one. to keep it renewing between commands (and after a reboot, once you log in), run `vinted auth service enable`; `vinted auth service status / disable / stop / run` manage it. details: [docs/galleton.md](docs/galleton.md).
 
 run multiple accounts side by side using profiles:
 
@@ -120,12 +123,7 @@ vinted profile use alt
 vinted search "levis 501" --profile alt
 ```
 
-for ci, pass the raw cookie header in `VINTED_COOKIES` so the cli writes no credentials file to disk:
-
-```bash
-export VINTED_COOKIES="access_token_web=...; refresh_token_web=..."
-vinted me favorites --format jsonl
-```
+upgrading from a version before the session engine: run `vinted auth login` once with a fresh export. older versions kept the cookies in `credentials.toml`; the new one never reads them and drops them on its first write.
 
 ## updates
 
@@ -142,8 +140,7 @@ eligible interactive commands check for a new stable release at most once a day 
 | credential | where it comes from | what it unlocks |
 |---|---|---|
 | none | | `search`, `item show`, `user *`, `category list`, `brand search`, watches on public data |
-| session cookies | browser export via `auth login` | favorites, own wardrobe, saved searches, chat, offers, managing your own items, `me *` |
-| `VINTED_COOKIES` | environment, for ci | same as above, never written to disk |
+| session cookies | browser export via `auth login`, held by the session engine | favorites, own wardrobe, saved searches, chat, offers, managing your own items, `me *` |
 
 vinted gates some features behind its own account verification: chat (reading the inbox too), offers, reservations, favorites and every change to your own items answer code 115 until vinted has verified the account. the cli turns that into exit `3` with a link to the verification page. search, item and member pages, saved searches and watches work without it.
 
@@ -152,7 +149,7 @@ vinted gates some features behind its own account verification: chat (reading th
 vinted sits behind datadome and cloudflare. they watch for traffic that looks automated, and when they decide yours is, they block the session ("Se ha bloqueado tu sesión", unusual activity) and sometimes the whole ip for hours. a blocked session can take your browser login down with it. the cli is built to stay well under that line, and it cannot be talked out of it:
 
 - **one request every 2 seconds per site, shared by every process.** all `vinted` processes and profiles on the machine queue behind one another through a small state file (`$XDG_STATE_HOME/vinted-cli/throttle.json`, locked while it is updated), with up to 1s of random jitter on every gap. raise it with `vinted config set request_interval 5s`; it cannot go below 1s.
-- **a block stops everything.** a captcha page, a datadome or cloudflare block, an http 429, or an unexplained 403 ends the command with exit `5`, is never retried, and starts a 6 hour cooldown (longer if vinted's `Retry-After` asks for it). until it ends, every command fails at once with the time left and sends nothing. `vinted cooldown` shows it, `vinted doctor` and `vinted auth status` too. `vinted cooldown clear` lifts it early; only do that once vinted works normally in your browser.
+- **a block stops everything.** a captcha page, a datadome or cloudflare block, an http 429, or an unexplained 403 ends the command with exit `5`, is never retried, and starts a 6 hour cooldown (longer if vinted's `Retry-After` asks for it). until it ends, every command fails at once with the time left and sends nothing, and the session engine is paused for as long, so it does not renew the session meanwhile. `vinted cooldown` shows it, `vinted doctor` and `vinted auth status` too. `vinted cooldown clear` lifts both early; only do that once vinted works normally in your browser.
 - **small requests only.** `search --pages` is capped at 5, a search watch reads at most 5 pages and a seller watch at most 10 wardrobe pages per check, and one command (one watch tick, one mcp tool call) may send at most 60 requests.
 - **slow schedules.** `watch add`, `watch run` and `watch service install` refuse intervals under 15 minutes; scheduled runs start after a random delay of up to a tenth of the interval, and watches are checked one after another. `chat open` polls every 30s (floor 10s).
 - **no needless requests.** the csrf token and the guest session are cached in the same state file (0600), so a command does not reload the home page each time; one keep-alive connection serves a whole command; every request carries the same chrome-on-linux headers, with client hints that match the user agent and the site's language.
@@ -161,7 +158,7 @@ what you should do:
 
 - keep intervals generous. a few watches every 15-30 minutes is fine; dozens every 15 minutes is not.
 - run the cli from the same network you browse vinted from. datacenter, vps and commercial vpn ip ranges are flagged far faster than a home connection.
-- if you need a proxy, set `proxy` in config.toml or `VINTED_PROXY` (`socks5h://127.0.0.1:1080`, `http://host:port`). all vinted traffic then goes through it, and if it is unreachable the request fails with exit `6`; it never falls back to a direct connection. config.toml is world-readable, so a proxy with credentials goes in `VINTED_PROXY` only (and then cannot be baked into `watch service install`).
+- if you need a proxy, set `proxy` in config.toml or `VINTED_PROXY` (`socks5h://127.0.0.1:1080`, `http://host:port`). all vinted traffic then goes through it, the session engine's token renewals included, and if it is unreachable the request fails with exit `6`; it never falls back to a direct connection. a running engine keeps the proxy it started with, and a command with a different one refuses to use it. config.toml is world-readable, so a proxy with credentials goes in `VINTED_PROXY` only (and then cannot be baked into `watch service install` or `auth service enable`).
 - when you hit a block: stop, wait out the cooldown, open vinted in your normal browser and solve any captcha there. if the session stays blocked, export fresh cookies and run `vinted auth login` again.
 
 none of this makes automated use invisible. vinted can still block the session; the cli only makes it much less likely and stops making it worse when it happens.
@@ -171,6 +168,7 @@ none of this makes automated use invisible. vinted can still block the session; 
 | command | what it does |
 |---|---|
 | `auth login / status / refresh / logout` | import, inspect, refresh or forget a session |
+| `auth service enable / disable / status / run / stop` | keep the session engine renewing between commands |
 | `profile list / use / remove` | several accounts side by side |
 | `search [text]` | catalog search with every web filter: `--catalog`, `--brand`, `--size`, `--condition`, `--color`, `--material`, `--pattern`, price and `--currency`, the category ones (`--video-game-rating`, `--platform`, `--model`, `--storage`, `--sim-lock`, `--language`), `--attr CODE=ID` for anything else; `--format jsonl` prints the result page on one line (`jq -c '.items[]'` for one item per line) |
 | `search filters` | the filters and option ids vinted offers for a search or `--catalog` (sizes, conditions, colours, materials, patterns...) |

@@ -1,6 +1,6 @@
 # vinted-cli v1
 
-Vocabulary: `AGENTS.md`. Decisions already recorded: `docs/adr/0001-session-from-web-cookie.md`. Interface contract: `docs/cli-spec.md`.
+Vocabulary: `AGENTS.md`. Decisions already recorded: `docs/adr/0001-session-from-web-cookie.md` (its storage and refresh were later replaced by the bundled session engine, `docs/adr/0002-cli-managed-galleton.md`). Interface contract: `docs/cli-spec.md`.
 
 ## Problem Statement
 

@@ -20,10 +20,11 @@ import (
 
 var checkArgs = []string{"watch", "check", "--all", "--profile", "default", "--format", "jsonl"}
 
-func TestServiceEnvCarriesThePathVariablesButNotTheSessionSecret(t *testing.T) {
+func TestServiceEnvCarriesThePathVariablesButNoSecret(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", "/home/u/state")
 	t.Setenv("XDG_DATA_HOME", "")
-	t.Setenv("VINTED_COOKIES", "secret-cookie")
+	t.Setenv("VINTED_GALLETON_TOKEN_FILE", "/state/api.token")
+	t.Setenv("GITHUB_TOKEN", "secret-token")
 	got := map[string]string{}
 	for _, kv := range serviceEnv() {
 		got[kv[0]] = kv[1]
@@ -34,8 +35,11 @@ func TestServiceEnvCarriesThePathVariablesButNotTheSessionSecret(t *testing.T) {
 	if _, ok := got["XDG_DATA_HOME"]; ok {
 		t.Fatal("an unset variable must stay unset in the unit, not become an empty path")
 	}
-	if _, ok := got["VINTED_COOKIES"]; ok {
-		t.Fatal("the session secret must never be written into a unit file")
+	if got["VINTED_GALLETON_TOKEN_FILE"] != "/state/api.token" {
+		t.Fatal("the external engine selection must reach the unit, or it would use another vault")
+	}
+	if _, ok := got["GITHUB_TOKEN"]; ok {
+		t.Fatal("an unrelated secret was written into a unit file")
 	}
 }
 
@@ -241,4 +245,28 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// The session engine follows HTTPS_PROXY when no proxy is configured, so a
+// unit carries it like VINTED_PROXY, and refuses it with credentials.
+func TestServiceEnvCarriesTheProxyVariables(t *testing.T) {
+	t.Setenv("VINTED_PROXY", "")
+	t.Setenv("HTTPS_PROXY", "http://proxy.lan:3128")
+	t.Setenv("NO_PROXY", "localhost")
+	got := map[string]string{}
+	for _, kv := range serviceEnv() {
+		got[kv[0]] = kv[1]
+	}
+	if got["HTTPS_PROXY"] != "http://proxy.lan:3128" || got["NO_PROXY"] != "localhost" {
+		t.Fatalf("proxy variables not carried: %v", got)
+	}
+	if err := checkServiceProxies(); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"http://alice:secret@proxy.lan:3128", "alice:secret@proxy.lan:3128", "ftp://alice:secret@proxy.lan"} {
+		t.Setenv("HTTPS_PROXY", v)
+		if err := checkServiceProxies(); err == nil || strings.Contains(err.Error(), "secret") {
+			t.Fatalf("credentialed HTTPS_PROXY %q accepted or echoed: %v", v, err)
+		}
+	}
 }

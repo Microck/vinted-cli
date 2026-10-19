@@ -12,6 +12,37 @@ import (
 // strings in page payloads, prices are "6.0" strings, and timestamps are
 // RFC 3339 strings or epoch seconds. These decoders accept every variant seen.
 
+// lenient decodes an optional part of a payload into T, and keeps the raw
+// JSON instead of failing when the part has a shape T does not describe.
+// One odd optional field then cannot fail the whole response, and the data
+// it carried still reaches the output through Raw (see Unparsed).
+type lenient[T any] struct {
+	V   T
+	Raw json.RawMessage
+}
+
+func (l *lenient[T]) UnmarshalJSON(b []byte) error {
+	var v T
+	if err := json.Unmarshal(b, &v); err != nil {
+		l.Raw = append(json.RawMessage(nil), b...)
+		return nil
+	}
+	l.V = v
+	return nil
+}
+
+// keepRaw records raw under key in *dst when it is set, for an output's
+// Unparsed map.
+func keepRaw(dst *map[string]json.RawMessage, key string, raw json.RawMessage) {
+	if len(raw) == 0 {
+		return
+	}
+	if *dst == nil {
+		*dst = map[string]json.RawMessage{}
+	}
+	(*dst)[key] = raw
+}
+
 // flexInt decodes 123, "123" or null.
 type flexInt int64
 

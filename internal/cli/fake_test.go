@@ -31,6 +31,7 @@ type fakeVinted struct {
 	wardrobe  map[string]any
 	revoked   bool // the refresh token no longer works
 	refreshes int
+	refresh   string // the one refresh token the server accepts next
 	toggles   []string
 	replies   []string
 	access    string // the logged-in access token currently accepted
@@ -53,6 +54,19 @@ func (f *fakeVinted) setBlock(path string, b *fakeBlock) {
 	f.mu.Lock()
 	f.block, f.blockPath = b, path
 	f.mu.Unlock()
+}
+
+func (f *fakeVinted) refreshCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.refreshes
+}
+
+// tokens are the access and refresh tokens the server accepts right now.
+func (f *fakeVinted) tokens() (access, refresh string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.access, f.refresh
 }
 
 func (f *fakeVinted) requestCount() int {
@@ -108,7 +122,7 @@ func fixture(t *testing.T, name string) []byte {
 }
 
 func newFakeVinted(t *testing.T) *fakeVinted {
-	f := &fakeVinted{t: t}
+	f := &fakeVinted{t: t, refresh: fakeRefresh}
 	if err := json.Unmarshal(fixture(t, "wardrobe.json"), &f.wardrobe); err != nil {
 		t.Fatal(err)
 	}
@@ -117,16 +131,22 @@ func newFakeVinted(t *testing.T) *fakeVinted {
 	return f
 }
 
-// cookieFile writes a Netscape export holding an expired access token and a
-// working refresh token, so the first authenticated call exercises refresh.
+// cookieFile writes a Netscape export for the fake's host holding an expired
+// access token and a working refresh token, so the session engine renews
+// right after the import. The export also carries another site's cookie,
+// as a whole-browser export does; it must not be imported.
 func (f *fakeVinted) cookieFile(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "cookies.txt")
 	exp := time.Now().Add(7 * 24 * time.Hour).Unix()
+	f.mu.Lock()
+	refresh := f.refresh
+	f.mu.Unlock()
 	body := "# Netscape HTTP Cookie File\n" +
-		fmt.Sprintf(".vinted.fr\tTRUE\t/\tTRUE\t%d\taccess_token_web\t%s\n", exp, jwt(fakeUserID, time.Now().Add(-time.Hour))) +
-		fmt.Sprintf("#HttpOnly_.vinted.fr\tTRUE\t/\tTRUE\t%d\trefresh_token_web\t%s\n", exp, fakeRefresh) +
-		fmt.Sprintf(".vinted.fr\tTRUE\t/\tFALSE\t%d\tdatadome\tdatadome-cookie-value\n", exp)
+		fmt.Sprintf("127.0.0.1\tFALSE\t/\tFALSE\t%d\taccess_token_web\t%s\n", exp, jwt(fakeUserID, time.Now().Add(-time.Hour))) +
+		fmt.Sprintf("#HttpOnly_127.0.0.1\tFALSE\t/\tFALSE\t%d\trefresh_token_web\t%s\n", exp, refresh) +
+		fmt.Sprintf("127.0.0.1\tFALSE\t/\tFALSE\t%d\tdatadome\tdatadome-cookie-value\n", exp) +
+		fmt.Sprintf(".example.com\tTRUE\t/\tTRUE\t%d\tunrelated\tunrelated-cookie-value\n", exp)
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -237,22 +257,26 @@ func (f *fakeVinted) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		html("home.html")
 	case r.Method == http.MethodPost && path == "/web/api/auth/refresh":
+		// Like Vinted: the refresh token is single use, and both tokens
+		// rotate in Set-Cookie (the refresh one HttpOnly).
 		c, err := r.Cookie("refresh_token_web")
 		f.mu.Lock()
-		revoked := f.revoked
-		f.mu.Unlock()
-		if err != nil || c.Value != fakeRefresh || revoked {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"code":0,"message":"invalid refresh token"}`))
+		if err != nil || c.Value != f.refresh || f.revoked {
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"code":100,"message":"invalid refresh token"}`))
 			return
 		}
 		tok := jwt(fakeUserID, time.Now().Add(time.Hour))
-		f.mu.Lock()
-		f.access = tok
 		f.refreshes++
+		f.access = tok
+		f.refresh = fmt.Sprintf("%s-%d", fakeRefresh, f.refreshes)
+		refresh := f.refresh
 		f.mu.Unlock()
+		http.SetCookie(w, &http.Cookie{Name: "access_token_web", Value: tok, Path: "/", MaxAge: 3600})
+		http.SetCookie(w, &http.Cookie{Name: "refresh_token_web", Value: refresh, Path: "/", HttpOnly: true, MaxAge: 7 * 86400})
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": tok, "refresh_token": fakeRefresh, "expires_in": 3600, "created_at": time.Now().Unix()})
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": tok, "refresh_token": refresh, "expires_in": 3600, "created_at": time.Now().Unix()})
 	case path == "/catalog":
 		html("catalog.html")
 	case strings.HasPrefix(path, "/items/"):
@@ -330,12 +354,6 @@ func (f *fakeVinted) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"code":404,"message":"Not found"}`))
 	}
-}
-
-// jwtFor is a logged-in access token for the fake account, valid an hour.
-func jwtFor(t *testing.T) string {
-	t.Helper()
-	return jwt(fakeUserID, time.Now().Add(time.Hour))
 }
 
 func fixtureItemRef() string { return fmt.Sprint(fixtureItemID) }

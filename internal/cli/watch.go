@@ -507,6 +507,8 @@ service units pass a tenth of their interval.`,
 			events, err := a.runChecks(cmd.Context(), st, ws)
 			if !stopsRun(err) {
 				a.keepSessionAlive(cmd.Context())
+			} else {
+				a.reportEngineBlocks(cmd.Context())
 			}
 			if events == nil {
 				events = []store.Event{}
@@ -522,17 +524,40 @@ service units pass a tenth of their interval.`,
 	return cmd
 }
 
-// keepSessionAlive refreshes the access token once per check run when a stored
-// session is close to expiry. Watches read public data, so a scheduled timer
-// would otherwise never refresh and the stored login would go stale. A token
-// that is still fresh costs nothing. Failure is a warning: the watches
-// themselves ran. An env session is skipped: its refresh is never persisted.
+// keepSessionAlive attaches to the session engine once per check run, so its
+// scheduler renews a stored session that is due while the check runs (and for
+// the engine's short idle grace after it). Watches read public data, so a
+// scheduled timer would otherwise leave the login to go stale. Failure is a
+// warning: the watches themselves ran.
 func (a *App) keepSessionAlive(ctx context.Context) {
-	if a.Session == nil || os.Getenv("VINTED_COOKIES") != "" {
+	if a.Account == nil {
 		return
 	}
-	if _, err := a.Session.AccessToken(ctx); err != nil && ctx.Err() == nil {
+	meta, err := a.Account.status(ctx)
+	switch {
+	case err != nil && ctx.Err() == nil:
 		fmt.Fprintf(a.Stderr, "vinted: session keepalive failed: %v\n", err)
+	case err == nil && meta.Status != "ready" && meta.Status != "retry_wait":
+		fmt.Fprintf(a.Stderr, "vinted: the session engine reports the session as %s; run `vinted auth status --check`\n", meta.Status)
+	}
+	if err != nil {
+		return
+	}
+	a.reportEngineBlocks(ctx)
+}
+
+// reportEngineBlocks starts the shared cooldown for a renewal the engine ran
+// on its own and the bot protection blocked: no command saw that block. It
+// runs after a stopped check too, whose blocked request may be the engine
+// refusing to send while it backs off.
+func (a *App) reportEngineBlocks(ctx context.Context) {
+	if a.Account == nil {
+		return
+	}
+	if c, err := a.galletonClient(ctx); err == nil {
+		if err := a.recordEngineBlocks(ctx, c, map[string]time.Time{}); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(a.Stderr, "vinted: could not check the session engine for blocked renewals: %v\n", err)
+		}
 	}
 }
 
@@ -567,6 +592,7 @@ Vinted's bot protection ends the loop with exit 5.`,
 					return nil
 				}
 				if stopsRun(err) {
+					a.reportEngineBlocks(ctx)
 					return err
 				}
 				a.keepSessionAlive(ctx)
@@ -835,13 +861,89 @@ func (a *App) serviceCommandLine(iv time.Duration) (string, []string, error) {
 // the one they installed from, checking nothing and reporting nothing, with no
 // error anywhere. HOME is in the list because it is where the paths come from
 // when the XDG variables are unset, which is the common case.
-// VINTED_COOKIES is deliberately absent: it is a secret, and a unit
-// file is world-readable. VINTED_PROXY goes in, or the timer would talk to
-// Vinted directly; install refuses one carrying credentials.
+// No credential goes in: a unit file is world-readable (the engine's API
+// token stays in its file; only the file's path goes in). The proxy variables
+// go in, or the timer (and the session engine it starts) would talk to Vinted
+// directly; install refuses one carrying credentials.
 var (
-	serviceEnvXDGKeys = []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"}
-	serviceEnvURLKeys = []string{"VINTED_BASE_URL", "VINTED_PROXY"}
+	serviceEnvXDGKeys   = []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"}
+	serviceEnvProxyKeys = []string{"VINTED_PROXY", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"}
+	// The external session engine selection and custom CA trust are paths and
+	// URLs, not secrets; without them a background run would use another
+	// engine (a vault without the session) or fail TLS.
+	serviceEnvURLKeys = append([]string{"VINTED_BASE_URL", "VINTED_GALLETON_DIR", "VINTED_GALLETON_URL", "VINTED_GALLETON_TOKEN_FILE", "SSL_CERT_FILE", "SSL_CERT_DIR"}, serviceEnvProxyKeys...)
 )
+
+// systemdEnv renders the frozen environment as Environment= lines, and
+// unsets every carried variable the enabling shell did not have: the user
+// manager's own environment must not slip in a proxy or path the shell
+// left out.
+func systemdEnv(env [][2]string) string {
+	var b strings.Builder
+	set := map[string]bool{}
+	for _, kv := range env {
+		set[kv[0]] = true
+		b.WriteString("Environment=" + systemdQuote(kv[0]+"="+kv[1]) + "\n")
+	}
+	var unset []string
+	for _, k := range append(append(append([]string{}, serviceEnvXDGKeys...), "VINTED_CONFIG"), serviceEnvURLKeys...) {
+		if !set[k] {
+			unset = append(unset, k)
+		}
+	}
+	if len(unset) > 0 {
+		b.WriteString("UnsetEnvironment=" + strings.Join(unset, " ") + "\n")
+	}
+	return b.String()
+}
+
+// launchdEnv adds every carried variable the enabling shell did not have as
+// an empty value: launchd has no unset, and the CLI, Go's proxy lookup and
+// the XDG paths all treat an empty variable as unset, so `launchctl setenv`
+// leftovers cannot slip in.
+func launchdEnv(env [][2]string) [][2]string {
+	set := map[string]bool{}
+	for _, kv := range env {
+		set[kv[0]] = true
+	}
+	out := append([][2]string{}, env...)
+	for _, k := range append(append(append([]string{}, serviceEnvXDGKeys...), "VINTED_CONFIG"), serviceEnvURLKeys...) {
+		if !set[k] {
+			out = append(out, [2]string{k, ""})
+		}
+	}
+	return out
+}
+
+// checkServiceProxies refuses to freeze a proxy carrying credentials into a
+// world-readable unit file.
+func checkServiceProxies() error {
+	for _, k := range serviceEnvProxyKeys {
+		raw := os.Getenv(k)
+		if raw == "" || strings.HasPrefix(strings.ToLower(k), "no_proxy") {
+			continue
+		}
+		if k != "VINTED_PROXY" && !strings.Contains(raw, "://") {
+			// Go reads a scheme-less HTTPS_PROXY as http://.
+			raw = "http://" + raw
+		}
+		u, err := vinted.ParseProxy(raw)
+		if err != nil {
+			if k == "VINTED_PROXY" {
+				return output.Usagef("VINTED_PROXY: %v", err)
+			}
+			// Unusable for the CLI, but it still lands in the unit as it is.
+			if strings.Contains(raw, "@") {
+				return output.Usagef("%s looks like it carries credentials, which would land in a world-readable unit file. Use a proxy without credentials (for example a local socks5h forwarder) for scheduled and background runs", k)
+			}
+			continue
+		}
+		if u.User != nil {
+			return output.Usagef("%s carries credentials, which would land in a world-readable unit file. Use a proxy without credentials (for example a local socks5h forwarder) for scheduled and background runs", k)
+		}
+	}
+	return nil
+}
 
 // serviceEnv freezes the current values of those variables into the unit, so
 // the scheduled run resolves the same paths as the install did. Each group has
@@ -889,13 +991,10 @@ func serviceEnv() [][2]string {
 // The append: paths take the rest of the line and need no quoting, but every
 // value still has its % doubled against specifier expansion.
 func systemdUnits(profile, exe string, args []string, logFile string, iv time.Duration, env [][2]string) (service, timer string) {
-	var envLines strings.Builder
-	for _, kv := range env {
-		envLines.WriteString("Environment=" + systemdQuote(kv[0]+"="+kv[1]) + "\n")
-	}
+	envLines := systemdEnv(env)
 	log := systemdLiteral(logFile)
 	service = fmt.Sprintf("[Unit]\nDescription=vinted-cli watch checks (%s)\n\n[Service]\nType=oneshot\n%sExecStart=%s %s\nStandardOutput=append:%s\nStandardError=append:%s\n",
-		profile, envLines.String(), systemdQuote(exe), systemdLiteral(strings.Join(args, " ")), log, log)
+		profile, envLines, systemdQuote(exe), systemdLiteral(strings.Join(args, " ")), log, log)
 	timer = fmt.Sprintf("[Unit]\nDescription=vinted-cli watch timer (%s)\n\n[Timer]\nOnBootSec=2m\nOnUnitActiveSec=%s\n\n[Install]\nWantedBy=timers.target\n",
 		profile, formatSystemd(iv))
 	return service, timer
@@ -944,14 +1043,8 @@ func schtasksCreate(taskName, exe string, args []string, iv time.Duration) strin
 }
 
 func (a *App) serviceInstall(iv time.Duration) error {
-	if raw := os.Getenv("VINTED_PROXY"); raw != "" {
-		u, err := vinted.ParseProxy(raw)
-		if err != nil {
-			return output.Usagef("VINTED_PROXY: %v", err)
-		}
-		if u.User != nil {
-			return output.Usagef("VINTED_PROXY carries credentials, which would land in a world-readable unit file. Use a proxy without credentials (for example a local socks5h forwarder) for the scheduled checks")
-		}
+	if err := checkServiceProxies(); err != nil {
+		return err
 	}
 	exe, args, err := a.serviceCommandLine(iv)
 	if err != nil {
@@ -1004,7 +1097,7 @@ func (a *App) serviceInstall(iv time.Duration) error {
 		}
 		view.State = "enabled"
 	case "launchd":
-		if err := os.WriteFile(u.files[0], []byte(launchdPlist(u.name, exe, args, logFile, iv, serviceEnv())), 0o644); err != nil {
+		if err := os.WriteFile(u.files[0], []byte(launchdPlist(u.name, exe, args, logFile, iv, launchdEnv(serviceEnv()))), 0o644); err != nil {
 			return err
 		}
 		_ = exec.Command("launchctl", "unload", u.files[0]).Run()

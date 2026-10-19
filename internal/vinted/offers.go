@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -24,6 +26,10 @@ type Offer struct {
 	Status       string  `json:"status"`
 	// Kind is "request" (a buyer's offer) or "offer" (a seller's counter).
 	Kind string `json:"kind"`
+	// Unparsed holds, by JSON path, parts of the conversation or of the
+	// answer in a shape the cli does not know
+	// ("conversation.messages.4.entity").
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }
 
 // offerStatus maps the numeric offer request states the web app checks.
@@ -42,47 +48,65 @@ func offerStatus(raw []byte) string {
 	return s
 }
 
+// rawDeal is the part of a conversation the offer calls read. Only the
+// transaction id is core; messages are read one by one and only the offer
+// request entities are decoded, so other message kinds cannot fail it.
 type rawDeal struct {
 	Conversation struct {
-		Transaction *struct {
-			ID       flexInt   `json:"id"`
-			UserSide string    `json:"user_side"`
-			BuyerID  flexInt   `json:"buyer_id"`
-			SellerID flexInt   `json:"seller_id"`
-			ItemID   flexInt   `json:"item_id"`
-			Offer    *rawMoney `json:"offer_price"`
-		} `json:"transaction"`
-		Messages []struct {
-			EntityType string `json:"entity_type"`
-			Entity     struct {
-				OfferRequestID flexInt         `json:"offer_request_id"`
-				UserID         flexInt         `json:"user_id"`
-				Status         json.RawMessage `json:"status"`
-				Price          flexMoneyAmount `json:"price"`
-				Currency       string          `json:"currency"`
-			} `json:"entity"`
-		} `json:"messages"`
+		Transaction lenient[*rawDealTransaction]       `json:"transaction"`
+		Messages    lenient[[]lenient[rawDealMessage]] `json:"messages"`
 	} `json:"conversation"`
 }
 
+type rawDealTransaction struct {
+	ID       flexInt            `json:"id"`
+	UserSide lenient[string]    `json:"user_side"`
+	SellerID flexInt            `json:"seller_id"`
+	Offer    lenient[*rawMoney] `json:"offer_price"`
+}
+
+type rawDealMessage struct {
+	EntityType string          `json:"entity_type"`
+	Entity     json.RawMessage `json:"entity"`
+}
+
+type rawOfferRequest struct {
+	OfferRequestID flexInt         `json:"offer_request_id"`
+	UserID         flexInt         `json:"user_id"`
+	Status         json.RawMessage `json:"status"`
+	Price          flexMoneyAmount `json:"price"`
+	Currency       lenient[string] `json:"currency"`
+}
+
 // flexMoneyAmount reads a price that is either "12.0" or {"amount":"12.0",...}.
+// Raw keeps a value of any other shape, for an output's Unparsed.
 type flexMoneyAmount struct {
 	Amount   float64
 	Currency string
+	Raw      json.RawMessage
 }
 
 func (m *flexMoneyAmount) UnmarshalJSON(b []byte) error {
 	b = bytes.TrimSpace(b)
 	if len(b) > 0 && b[0] == '{' {
 		var r rawMoney
-		if err := json.Unmarshal(b, &r); err == nil {
-			m.Amount, m.Currency = r.amount(), r.currency()
+		if err := json.Unmarshal(b, &r); err != nil {
+			m.Raw = append(json.RawMessage(nil), b...)
+			return nil
 		}
+		m.Amount, m.Currency = r.amount(), r.currency()
 		return nil
 	}
-	var f flexFloat
-	_ = f.UnmarshalJSON(b)
-	m.Amount = float64(f)
+	s := strings.Trim(string(b), `"`)
+	if s == "" || s == "null" {
+		return nil
+	}
+	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", "."), 64)
+	if err != nil {
+		m.Raw = append(json.RawMessage(nil), b...)
+		return nil
+	}
+	m.Amount = v
 	return nil
 }
 
@@ -94,6 +118,9 @@ type deal struct {
 	currency    string
 	// pending is the latest offer request awaiting the seller.
 	pending *Offer
+	// unparsed holds conversation parts in a shape the cli does not know,
+	// for the Offer the call returns.
+	unparsed map[string]json.RawMessage
 }
 
 func (c *Client) deal(ctx context.Context, convID int64) (deal, error) {
@@ -104,28 +131,47 @@ func (c *Client) deal(ctx context.Context, convID int64) (deal, error) {
 	if err != nil {
 		return deal{}, err
 	}
+	path := "/api/v2/conversations/" + strconv.FormatInt(convID, 10)
 	var raw rawDeal
-	if err := c.getJSON(ctx, "/api/v2/conversations/"+strconv.FormatInt(convID, 10), nil, true, &raw); err != nil {
+	if err := c.getJSON(ctx, path, nil, true, &raw); err != nil {
 		return deal{}, notFoundAs(err, "conversation %d does not exist", convID)
 	}
-	t := raw.Conversation.Transaction
+	if tr := raw.Conversation.Transaction.Raw; tr != nil {
+		return deal{}, &Error{Kind: KindAPIChanged, Endpoint: "GET " + path, Body: c.snippet(tr), Msg: "vinted sent the conversation's transaction in a shape the cli cannot read"}
+	}
+	t := raw.Conversation.Transaction.V
 	if t == nil || t.ID == 0 {
 		return deal{}, Usage("conversation %d is not about an item, so it has no offers or reservation", convID)
 	}
-	d := deal{conv: convID, transaction: int64(t.ID), currency: t.Offer.currency()}
-	d.seller = t.UserSide == "seller" || (t.SellerID != 0 && int64(t.SellerID) == me)
-	for _, m := range raw.Conversation.Messages {
-		if m.EntityType != "offer_request_message" {
+	d := deal{conv: convID, transaction: int64(t.ID), currency: t.Offer.V.currency()}
+	d.seller = t.UserSide.V == "seller" || (t.SellerID != 0 && int64(t.SellerID) == me)
+	keepRaw(&d.unparsed, "conversation.transaction.user_side", t.UserSide.Raw)
+	keepRaw(&d.unparsed, "conversation.transaction.offer_price", t.Offer.Raw)
+	keepRaw(&d.unparsed, "conversation.messages", raw.Conversation.Messages.Raw)
+	for i, lm := range raw.Conversation.Messages.V {
+		at := "conversation.messages." + strconv.Itoa(i)
+		if lm.Raw != nil {
+			keepRaw(&d.unparsed, at, lm.Raw)
 			continue
 		}
-		e := m.Entity
+		if lm.V.EntityType != "offer_request_message" {
+			continue
+		}
+		var e rawOfferRequest
+		if err := json.Unmarshal(lm.V.Entity, &e); err != nil {
+			keepRaw(&d.unparsed, at+".entity", lm.V.Entity)
+			continue
+		}
+		keepRaw(&d.unparsed, at+".entity.price", e.Price.Raw)
+		keepRaw(&d.unparsed, at+".entity.currency", e.Currency.Raw)
+		currency := firstNonEmpty(e.Currency.V, e.Price.Currency)
 		if d.currency == "" {
-			d.currency = firstNonEmpty(e.Currency, e.Price.Currency)
+			d.currency = currency
 		}
 		if int64(e.UserID) == me || e.OfferRequestID == 0 {
 			continue
 		}
-		o := &Offer{ID: int64(e.OfferRequestID), Conversation: convID, Transaction: d.transaction, Amount: e.Price.Amount, Currency: firstNonEmpty(e.Currency, e.Price.Currency), Status: offerStatus(e.Status), Kind: "request"}
+		o := &Offer{ID: int64(e.OfferRequestID), Conversation: convID, Transaction: d.transaction, Amount: e.Price.Amount, Currency: currency, Status: offerStatus(e.Status), Kind: "request"}
 		if o.Status == "pending" {
 			d.pending = o
 		}
@@ -152,14 +198,14 @@ func (c *Client) SendOffer(ctx context.Context, convID int64, amount float64, cu
 		return Offer{}, Usage("could not tell the conversation's currency; pass --currency")
 	}
 	base := "/api/v2/transactions/" + strconv.FormatInt(d.transaction, 10)
-	o := Offer{Conversation: convID, Transaction: d.transaction, Amount: amount, Currency: currency, Status: "pending"}
+	o := Offer{Conversation: convID, Transaction: d.transaction, Amount: amount, Currency: currency, Status: "pending", Unparsed: d.unparsed}
+	// The offer is sent once this answers, so its shape must not fail it.
+	type created struct {
+		ID flexInt `json:"id"`
+	}
 	var out struct {
-		OfferRequest *struct {
-			ID flexInt `json:"id"`
-		} `json:"offer_request"`
-		Offer *struct {
-			ID flexInt `json:"id"`
-		} `json:"offer"`
+		OfferRequest lenient[*created] `json:"offer_request"`
+		Offer        lenient[*created] `json:"offer"`
 	}
 	r := request{method: http.MethodPost, auth: true, csrf: true}
 	if d.seller {
@@ -175,11 +221,13 @@ func (c *Client) SendOffer(ctx context.Context, convID int64, amount float64, cu
 		return Offer{}, err
 	}
 	switch {
-	case out.OfferRequest != nil:
-		o.ID = int64(out.OfferRequest.ID)
-	case out.Offer != nil:
-		o.ID = int64(out.Offer.ID)
+	case out.OfferRequest.V != nil:
+		o.ID = int64(out.OfferRequest.V.ID)
+	case out.Offer.V != nil:
+		o.ID = int64(out.Offer.V.ID)
 	}
+	keepRaw(&o.Unparsed, "offer_request", out.OfferRequest.Raw)
+	keepRaw(&o.Unparsed, "offer", out.Offer.Raw)
 	return o, nil
 }
 
@@ -194,6 +242,9 @@ func (c *Client) RespondOffer(ctx context.Context, convID int64, accept bool) (O
 		return Offer{}, Usage("only the seller can accept or decline offers in conversation %d", convID)
 	}
 	if d.pending == nil {
+		if len(d.unparsed) > 0 {
+			return Offer{}, NotFound("conversation %d has no pending offer the cli can read; vinted sent %s in a shape it does not know", convID, strings.Join(slices.Sorted(maps.Keys(d.unparsed)), ", "))
+		}
 		return Offer{}, NotFound("conversation %d has no pending offer", convID)
 	}
 	verb, status := "reject", "rejected"
@@ -206,6 +257,7 @@ func (c *Client) RespondOffer(ctx context.Context, convID int64, accept bool) (O
 	}
 	o := *d.pending
 	o.Status = status
+	o.Unparsed = d.unparsed
 	return o, nil
 }
 

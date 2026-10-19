@@ -8,10 +8,12 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Microck/vinted-cli/internal/config"
+	"github.com/Microck/vinted-cli/internal/galleton"
 	"github.com/Microck/vinted-cli/internal/mcp"
 	"github.com/Microck/vinted-cli/internal/output"
 )
@@ -34,12 +36,56 @@ Examples:
   vinted mcp                       # usually started by the harness, not by hand`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Hold a session engine lease for the server's lifetime, so the
+			// engine keeps renewing the profile's session between tool calls
+			// instead of stopping after its idle grace. A failure is only a
+			// warning: tools report engine errors themselves.
+			if a.Account != nil {
+				if _, err := a.Account.status(cmd.Context()); err != nil && cmd.Context().Err() == nil {
+					fmt.Fprintf(a.Stderr, "vinted: session engine: %v\n", err)
+				}
+			}
+			// Between tool calls the engine renews on its own; report a
+			// renewal the bot protection blocked, as `auth service run` does.
+			ctx, stop := context.WithCancel(cmd.Context())
+			defer stop()
+			go a.watchEngineBlocks(ctx)
 			srv := &mcp.Server{Version: a.Version, Run: a.runCommand}
-			return srv.Serve(cmd.Context(), a.Stdin, a.Stdout)
+			return srv.Serve(ctx, a.Stdin, a.Stdout)
 		},
 	}
 	cmd.AddCommand(a.mcpInstallCmd())
 	return cmd
+}
+
+// watchEngineBlocks checks the running engine for blocked renewals every
+// serviceTick until ctx ends. It attaches on its own each time and reads no
+// state the tool calls change, so it can run beside them.
+func (a *App) watchEngineBlocks(ctx context.Context) {
+	reported := map[string]time.Time{}
+	tick := time.NewTicker(serviceTick)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		var c *galleton.Client
+		var err error
+		if galleton.Configured() {
+			c, err = galleton.FromEnv()
+		} else {
+			c, err = galleton.IfRunning(ctx, a.sessionDir())
+		}
+		if err != nil || c == nil {
+			continue
+		}
+		if err := a.recordEngineBlocks(ctx, c, reported); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(a.Stderr, "vinted: could not check the session engine for blocked renewals: %v\n", err)
+		}
+		c.Close()
+	}
 }
 
 func (a *App) mcpInstallCmd() *cobra.Command {
@@ -93,8 +139,9 @@ func (v installView) Pretty(w io.Writer, color bool) {
 // it printed. Tools are defined as argv, so what the agent reads is literally
 // what the command prints; there is no second rendering path to drift.
 //
-// Each call builds a fresh App: config, credentials and a rotated session are
-// re-read, so a long-running server does not serve a stale account.
+// Each call builds a fresh App: config and credentials are re-read, so a
+// long-running server does not serve a stale account. The session engine
+// lease is per call too.
 func (a *App) runCommand(ctx context.Context, argv []string) mcp.Result {
 	var out bytes.Buffer
 	sub := &App{
@@ -121,6 +168,16 @@ func (a *App) runCommand(ctx context.Context, argv []string) mcp.Result {
 	cmd, err := root.ExecuteContextC(ctx)
 	if sub.store != nil {
 		sub.store.Close() // one server run does many checks; do not leak handles
+	}
+	if sub.sessionClient != nil {
+		sub.sessionClient.Close() // release the session engine lease
+	}
+	// A login made after the server started: hold the lifetime lease from now
+	// on, so the engine keeps renewing between tool calls.
+	if a.sessionClient == nil && sub.Account != nil {
+		if _, err := a.galletonClient(ctx); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(a.Stderr, "vinted: session engine: %v\n", err)
+		}
 	}
 	if err == nil {
 		return mcp.Result{Stdout: out.String()}

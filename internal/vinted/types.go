@@ -1,6 +1,7 @@
 package vinted
 
 import (
+	"encoding/json"
 	"net/url"
 	"time"
 )
@@ -64,6 +65,10 @@ type Item struct {
 	// other people's items carry no exact date.
 	Uploaded  string    `json:"uploaded,omitempty"`
 	CreatedAt time.Time `json:"created_at,omitzero"`
+	// Unparsed holds, by JSON path, the raw page data the cli has no reader
+	// for or that came in a shape it does not know (plugins.<name>, ...),
+	// so nothing on the page is lost.
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }
 
 // ItemPhoto is one listing photo. URL is the largest rendition the page links
@@ -152,6 +157,9 @@ type SearchPage struct {
 	Page       int    `json:"page"`
 	TotalPages int    `json:"total_pages"`
 	Total      int    `json:"total"`
+	// Unparsed holds, by JSON path, list entries or parts of the response in
+	// a shape the cli does not know ("items.3", "pagination").
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }
 
 type User struct {
@@ -173,6 +181,9 @@ type User struct {
 	// Vinted asks for it (code 115) before the inbox and favourites work.
 	PhoneVerified *bool     `json:"phone_verified,omitempty"`
 	LastSeen      time.Time `json:"last_seen,omitzero"`
+	// Unparsed holds, by JSON path, profile parts in a shape the cli does
+	// not know ("verification.phone").
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }
 
 type Review struct {
@@ -183,12 +194,18 @@ type Review struct {
 	ByID      int64     `json:"by_id,omitempty"`
 	ByLogin   string    `json:"by_login,omitempty"`
 	ItemTitle string    `json:"item_title,omitempty"`
+	// Unparsed holds, by JSON path, review parts in a shape the cli does not
+	// know ("user", or "user_feedbacks.N" for a whole unreadable review).
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }
 
 type Category struct {
 	ID       int        `json:"id"`
 	Title    string     `json:"title"`
 	Children []Category `json:"children,omitempty"`
+	// Unparsed holds, by JSON path, subcategories in a shape the cli does
+	// not know ("catalogs.N").
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }
 
 type Brand struct {
@@ -196,6 +213,9 @@ type Brand struct {
 	Title string `json:"title"`
 	Slug  string `json:"slug,omitempty"`
 	Items int    `json:"items,omitempty"`
+	// Unparsed holds a brand entry in a shape the cli does not know
+	// ("brands.N").
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }
 
 type Conversation struct {
@@ -206,6 +226,10 @@ type Conversation struct {
 	UpdatedAt   time.Time `json:"updated_at,omitzero"`
 	LastMessage string    `json:"last_message,omitempty"`
 	Messages    []Message `json:"messages,omitempty"`
+	// Unparsed holds, by JSON path, conversation parts in a shape the cli
+	// does not know ("opposite_user", "transaction", "messages.N"), or a
+	// whole inbox row ("conversations.N") when it cannot be read at all.
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }
 
 type ChatUser struct {
@@ -225,4 +249,7 @@ type Message struct {
 	FromSelf bool      `json:"from_self"`
 	Text     string    `json:"text"`
 	At       time.Time `json:"at"`
+	// Unparsed holds, by JSON path, message parts in a shape the cli does
+	// not know ("entity").
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }

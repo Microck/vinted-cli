@@ -2,6 +2,7 @@ package vinted
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -22,38 +23,60 @@ type SavedSearch struct {
 	LastVisit time.Time `json:"last_visited_at,omitzero"`
 	// Query is the search the saved one runs, ready for Search.
 	Query SearchParams `json:"query"`
+	// Unparsed holds, by JSON path, parts of the saved search in a shape
+	// the cli does not know ("selected_filters.0", "price_from"), or the
+	// whole entry ("previous_searches.N") when it cannot be read at all.
+	Unparsed map[string]json.RawMessage `json:"unparsed,omitempty"`
 }
 
 type rawPreviousSearch struct {
-	ID              flexInt   `json:"id"`
-	Title           string    `json:"title"`
-	Subtitle        string    `json:"subtitle"`
-	Type            string    `json:"type"`
-	SearchText      string    `json:"search_text"`
-	CatalogID       flexInt   `json:"catalog_id"`
-	PriceFrom       *rawMoney `json:"price_from"`
-	PriceTo         *rawMoney `json:"price_to"`
-	NewItemsCount   int       `json:"new_items_count"`
-	LastVisitedAt   flexTime  `json:"last_visited_at"`
-	SelectedFilters []struct {
-		Code string    `json:"code"`
-		IDs  []flexInt `json:"ids"`
-	} `json:"selected_filters"`
+	ID            flexInt         `json:"id"`
+	Title         string          `json:"title"`
+	Subtitle      string          `json:"subtitle"`
+	Type          string          `json:"type"`
+	SearchText    string          `json:"search_text"`
+	CatalogID     flexInt         `json:"catalog_id"`
+	PriceFrom     flexMoneyAmount `json:"price_from"`
+	PriceTo       flexMoneyAmount `json:"price_to"`
+	NewItemsCount flexInt         `json:"new_items_count"`
+	LastVisitedAt flexTime        `json:"last_visited_at"`
+	// SelectedFilters are the search's catalog filters, one entry per filter
+	// code; an entry or id in an unknown shape is kept raw.
+	SelectedFilters lenient[[]lenient[rawSelectedFilter]] `json:"selected_filters"`
+}
+
+type rawSelectedFilter struct {
+	Code string            `json:"code"`
+	IDs  []json.RawMessage `json:"ids"`
 }
 
 func (r rawPreviousSearch) normalize() SavedSearch {
 	s := SavedSearch{
 		ID: int64(r.ID), Title: r.Title, Subtitle: r.Subtitle, Saved: r.Type == "type_saved",
-		NewItems: r.NewItemsCount, LastVisit: r.LastVisitedAt.Time,
+		NewItems: int(r.NewItemsCount), LastVisit: r.LastVisitedAt.Time,
 	}
-	q := SearchParams{Text: r.SearchText, PriceFrom: r.PriceFrom.amount(), PriceTo: r.PriceTo.amount()}
+	keepRaw(&s.Unparsed, "price_from", r.PriceFrom.Raw)
+	keepRaw(&s.Unparsed, "price_to", r.PriceTo.Raw)
+	keepRaw(&s.Unparsed, "selected_filters", r.SelectedFilters.Raw)
+	q := SearchParams{Text: r.SearchText, PriceFrom: r.PriceFrom.Amount, PriceTo: r.PriceTo.Amount}
 	if r.CatalogID != 0 {
 		q.CatalogIDs = []int{int(r.CatalogID)}
 	}
-	for _, f := range r.SelectedFilters {
+	for i, lf := range r.SelectedFilters.V {
+		path := "selected_filters." + strconv.Itoa(i)
+		if lf.Raw != nil {
+			keepRaw(&s.Unparsed, path, lf.Raw)
+			continue
+		}
+		f := lf.V
 		ids := make([]int, 0, len(f.IDs))
-		for _, id := range f.IDs {
-			ids = append(ids, int(id))
+		for j, raw := range f.IDs {
+			id, ok := filterID(raw)
+			if !ok {
+				keepRaw(&s.Unparsed, path+".ids."+strconv.Itoa(j), raw)
+				continue
+			}
+			ids = append(ids, id)
 		}
 		switch f.Code {
 		case "brand":
@@ -79,6 +102,21 @@ func (r rawPreviousSearch) normalize() SavedSearch {
 	return s
 }
 
+// filterID reads a filter option id given as 12, 12.0 or "12". ok is false
+// for any other shape (an option object, a non-numeric string), which the
+// caller keeps raw rather than searching for id 0.
+func filterID(raw json.RawMessage) (int, bool) {
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		s = string(raw)
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || f < 1 || f != float64(int(f)) {
+		return 0, false
+	}
+	return int(f), true
+}
+
 func (c *Client) searchBarPath() (string, error) {
 	me, err := c.selfID()
 	if err != nil {
@@ -88,21 +126,28 @@ func (c *Client) searchBarPath() (string, error) {
 }
 
 // SavedSearches lists the account's saved searches, or with all also the
-// recent searches the search box remembers.
+// recent searches the search box remembers. An entry in an unknown shape is
+// listed either way, kept whole in its Unparsed, since its type is unknown.
 func (c *Client) SavedSearches(ctx context.Context, all bool) ([]SavedSearch, error) {
 	path, err := c.searchBarPath()
 	if err != nil {
 		return nil, err
 	}
 	var out struct {
-		PreviousSearches []rawPreviousSearch `json:"previous_searches"`
+		PreviousSearches []lenient[rawPreviousSearch] `json:"previous_searches"`
 	}
 	if _, err := c.do(ctx, request{method: http.MethodGet, path: path, auth: true, gateway: true}, &out); err != nil {
 		return nil, err
 	}
 	list := make([]SavedSearch, 0, len(out.PreviousSearches))
-	for _, r := range out.PreviousSearches {
-		s := r.normalize()
+	for i, r := range out.PreviousSearches {
+		if r.Raw != nil {
+			var s SavedSearch
+			keepRaw(&s.Unparsed, "previous_searches."+strconv.Itoa(i), r.Raw)
+			list = append(list, s)
+			continue
+		}
+		s := r.V.normalize()
 		if all || s.Saved {
 			list = append(list, s)
 		}

@@ -1,6 +1,6 @@
 // Package config owns everything the CLI persists outside the state database:
 // XDG paths, config.toml (hand-edited, world-readable) and credentials.toml
-// (cookie jars, 0600). The two files are kept apart so that sharing or committing
+// (which session-engine session each profile uses, 0600). The two files are kept apart so that sharing or committing
 // a config never leaks a session.
 package config
 
@@ -120,17 +120,22 @@ func Save(path string, cfg Config) error {
 	return WriteAtomic(path, out, 0o644)
 }
 
-// Session is one profile's login: the imported browser cookie jar (access and
-// refresh tokens plus the anti-bot cookies they travel with) and the account it
-// belongs to. Cookies never reach JSON output.
+// Session is one profile's login. The cookies are not here: they live in the
+// Galleton session engine's encrypted vault, which renews them and is the
+// only party that ever holds them. GalletonID names the profile's session
+// there; the rest is non-secret metadata recorded at login.
 type Session struct {
-	Cookies map[string]string `toml:"cookies" json:"-"`
-	UserID  int64             `toml:"user_id" json:"user_id"`
-	Login   string            `toml:"login" json:"login"`
-	// SessionExpires is the exp of the current access token: the moment the
-	// next request has to refresh. Zero when unknown.
-	SessionExpires time.Time `toml:"session_expires,omitempty" json:"session_expires,omitempty"`
-	UpdatedAt      time.Time `toml:"updated_at" json:"updated_at"`
+	GalletonID string `toml:"galleton_id" json:"session_id"`
+	// Replaced are engine sessions an earlier login replaced but could not
+	// delete; the next command that reaches the engine deletes them.
+	Replaced  []string  `toml:"replaced_galleton_ids,omitempty" json:"-"`
+	UserID    int64     `toml:"user_id" json:"user_id"`
+	Login     string    `toml:"login" json:"login"`
+	UpdatedAt time.Time `toml:"updated_at" json:"updated_at"`
+	// Legacy marks a profile still holding the cookie jar an older
+	// vinted-cli kept in this file. It is never used: the profile needs
+	// `vinted auth login`, and the next write of the file drops the cookies.
+	Legacy bool `toml:"-" json:"-"`
 }
 
 type Credentials struct {
@@ -151,6 +156,19 @@ func LoadCredentials(path string) (Credentials, error) {
 	}
 	if creds.Profiles == nil {
 		creds.Profiles = map[string]Session{}
+	}
+	var legacy struct {
+		Profiles map[string]struct {
+			Cookies map[string]any `toml:"cookies"`
+		} `toml:"profiles"`
+	}
+	if err := toml.Unmarshal(raw, &legacy); err == nil {
+		for name, p := range legacy.Profiles {
+			if s, ok := creds.Profiles[name]; ok && len(p.Cookies) > 0 && s.GalletonID == "" {
+				s.Legacy = true
+				creds.Profiles[name] = s
+			}
+		}
 	}
 	return creds, nil
 }

@@ -56,15 +56,19 @@ One named Vinted account known to the CLI, with its Session and Vinted domain. O
 _Avoid_: Account (ambiguous with the Vinted account itself), user
 
 **Session**:
-The imported browser cookies that let the CLI act as a Profile's account: `access_token_web`, `refresh_token_web` and whatever else the export carried. Stored in `credentials.toml` at mode 0600.
+The imported browser cookies that let the CLI act as a Profile's account: `access_token_web`, `refresh_token_web` and the site's other cookies from the export. Held only by the **Session engine**; `credentials.toml` stores the engine's session ID.
 _Avoid_: Credentials, login
 
+**Session engine**:
+The pinned Galleton daemon bundled in the binary (`internal/galleton`, `docs/galleton.md`). It keeps every Session in an encrypted vault, renews it, and sends every logged-in request with its cookies. After `auth login` hands the export over, the CLI process never holds an account cookie.
+_Avoid_: Daemon (fine in code), vault, token store
+
 **Access token**:
-The short-lived JWT in `access_token_web` (about an hour), sent on every authenticated request. Refreshed automatically before it expires.
+The short-lived JWT in `access_token_web` (about an hour), sent on every authenticated request. The Session engine renews it before it expires.
 _Avoid_: Session token, bearer
 
 **Refresh token**:
-The `refresh_token_web` cookie. Exchanged at `POST /web/api/auth/refresh` for a new Access token; whatever comes back is persisted.
+The `refresh_token_web` cookie. Single use: the Session engine exchanges it at `POST /web/api/auth/refresh` for a new pair and keeps both. Replaying a spent one revokes the login.
 _Avoid_: Session
 
 **Favorite**:

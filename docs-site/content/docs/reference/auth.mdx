@@ -25,16 +25,21 @@ browser where you are logged in:
 
   1. Install a cookie export extension (Cookie-Editor works) and open your
      Vinted site (www.vinted.com, www.vinted.fr, www.vinted.es, ...).
-  2. Export cookies as Netscape/text or JSON and save the file, or copy the
-     browser's Cookie request header.
+  2. Export cookies as Netscape cookies.txt or JSON (Cookie-Editor,
+     EditThisCookie, DevTools and Playwright lists all work) and save the
+     file, or copy the browser's Cookie request header. A whole-browser
+     export is fine: only the Vinted site's cookies are kept.
   3. Run this command and paste the file path or the header when asked, or
      pass --cookies FILE / --cookies-stdin.
 
-The whole jar is kept in credentials.toml (mode 0600), because Vinted's
-anti-bot cookies travel with the tokens. The access token is renewed through
-Vinted's refresh endpoint when it is about to expire, and the renewed cookies
-are written back. The site comes from the cookies' domain unless --domain is
-given. Google, Apple and Facebook accounts work the same way.
+The cookies go into the bundled Galleton session engine's encrypted vault,
+never into credentials.toml. The engine renews the access token through
+Vinted's refresh endpoint before it expires, keeps the rotated cookies, and
+is the only party that ever uses the single-use refresh token. After the
+import, stop using that browser login (log out there and log in again if
+you need the website): the browser still holds the refresh token the engine
+spends. The site comes from the cookies' domain unless --domain is given.
+Google, Apple and Facebook accounts work the same way.
 
 ```bash
 vinted auth login
@@ -68,10 +73,65 @@ Renew the access token now
 vinted auth refresh
 ```
 
-Renew the access token now through Vinted's refresh endpoint and store the
-renewed cookies. Commands refresh on their own shortly before expiry; this is
-for checking that the refresh token still works. It fails when Vinted has
-revoked the login, and then only a new "vinted auth login" helps.
+Ask the session engine to renew the access token now through Vinted's
+refresh endpoint. It renews on its own before expiry; this is for checking
+that the refresh token still works. It fails when Vinted has revoked the
+login, and then only a new "vinted auth login" helps.
+
+## `vinted auth service`
+
+Manage optional unattended session renewal
+
+The bundled Galleton session engine renews the stored session while vinted
+commands, watches or the MCP server run, and stops ten seconds after the
+last one exits. "enable" keeps it running between commands and restarts it
+at OS login (a systemd user unit, a LaunchAgent, or a Windows logon task),
+so the session renews even when nothing else runs. The unit carries the
+paths and VINTED_PROXY of the shell that enabled it, never a credential.
+
+### `vinted auth service disable`
+
+Remove unattended renewal at OS login
+
+```bash
+vinted auth service disable
+```
+
+### `vinted auth service enable`
+
+Enable unattended renewal at OS login
+
+```bash
+vinted auth service enable
+```
+
+### `vinted auth service run`
+
+Keep session renewal running until interrupted
+
+```bash
+vinted auth service run [flags]
+```
+
+| Flag | Type | Default | Description |
+| --- | --- | --- | --- |
+| `--dir` | string | - | absolute private state directory (used by installed services) |
+
+### `vinted auth service status`
+
+Inspect the session engine without starting it
+
+```bash
+vinted auth service status
+```
+
+### `vinted auth service stop`
+
+Stop an idle session engine without deleting credentials
+
+```bash
+vinted auth service stop
+```
 
 ## `vinted auth status`
 
@@ -81,7 +141,11 @@ Show the active profile's session
 vinted auth status [flags]
 ```
 
+Show the active profile's session as stored locally, without contacting
+anything. --check also asks the session engine for its state and reads the
+account from Vinted, which renews the access token first when it is due.
+
 | Flag | Type | Default | Description |
 | --- | --- | --- | --- |
-| `--check` | bool | `false` | call Vinted to verify the session still works |
+| `--check` | bool | `false` | ask the session engine and Vinted whether the session still works |
 

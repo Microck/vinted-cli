@@ -468,7 +468,7 @@ func pageView(sp vinted.SearchPage) itemsView {
 	if sp.Items == nil {
 		sp.Items = []vinted.Item{}
 	}
-	return itemsView{Items: sp.Items, Page: sp.Page, TotalPages: sp.TotalPages, Total: sp.Total}
+	return itemsView{Items: sp.Items, Page: sp.Page, TotalPages: sp.TotalPages, Total: sp.Total, Unparsed: sp.Unparsed}
 }
 
 func (a *App) userCmd() *cobra.Command {

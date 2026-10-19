@@ -65,7 +65,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
-          registry-url: https://registry.npmjs.org
+          # Leave token auth unconfigured so npm can use its OIDC exchange.
           package-manager-cache: false
       - name: select released version
         id: version
@@ -84,8 +84,6 @@ jobs:
       - name: install packaging dependencies
         working-directory: npm
         run: npm ci --ignore-scripts
-      - name: publish with provenance
+      - name: publish with npm trusted publishing
         working-directory: npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public --tag "${{ steps.version.outputs.tag }}"
+        run: npm publish --access public --tag "${{ steps.version.outputs.tag }}"

@@ -1,7 +1,7 @@
 # 0001. Sessions come from the web cookies and the refresh endpoint, not from email/password
 
 Date: 2026-10-17
-Status: accepted
+Status: accepted; storage and refresh superseded by [0002](0002-cli-managed-galleton.md)
 
 ## Context
 
