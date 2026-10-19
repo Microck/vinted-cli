@@ -31,6 +31,11 @@ func TestMain(m *testing.M) {
 		}
 		os.Exit(0)
 	}
+	// ProxyFromEnvironment caches on first use. Isolate before any test
+	// constructs a client; buildEnv retains proxy settings for module downloads.
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy"} {
+		_ = os.Unsetenv(key)
+	}
 	code := m.Run()
 	if engineDir != "" {
 		os.RemoveAll(engineDir)
@@ -181,6 +186,9 @@ func newHarness(t *testing.T) *harness {
 	t.Setenv("VINTED_PROXY", "")
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "state"))
 	t.Setenv("HOME", home)
+	// Keep MCP installation tests inside the disposable home even when the
+	// developer runs the suite from a configured Codex environment.
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("VINTED_PROFILE", "")
 	t.Setenv("VINTED_CONFIG", "")
 	for _, k := range []string{"VINTED_GALLETON_DIR", "VINTED_GALLETON_URL", "VINTED_GALLETON_TOKEN_FILE"} {

@@ -54,3 +54,21 @@ jobs:
       - name: build
         run: npm run build
         working-directory: docs-site
+
+  browser-flows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: docs-site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm run build
+      - run: npx e2e-web install chromium --with-deps
+      - run: npm run test:e2e
+        env:
+          E2E_TELEMETRY_DISABLED: "1"

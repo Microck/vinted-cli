@@ -161,3 +161,28 @@ func TestSearchWatchEmitInitialReportsEverythingOnce(t *testing.T) {
 		t.Fatalf("reshuffle after emit-initial reported %v", evs)
 	}
 }
+
+func TestSearchWatchDeduplicatesRepeatedItemsWithinCheck(t *testing.T) {
+	cs, c := newCatalogServer(t)
+	st, w := newSearchWatch(t)
+	cs.set(1000000009, 1000000009)
+	result, err := Check(context.Background(), c, st, w, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Events) != 1 || len(result.Upserts) != 1 {
+		t.Fatalf("duplicate item produced %d events and %d upserts", len(result.Events), len(result.Upserts))
+	}
+	var eventItem, upsertItem vinted.Item
+	if err := json.Unmarshal(result.Events[0].Item, &eventItem); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(result.Upserts[0].Snapshot, &upsertItem); err != nil {
+		t.Fatal(err)
+	}
+	for name, item := range map[string]vinted.Item{"event": eventItem, "upsert": upsertItem} {
+		if item.Title != "Nike Air Max 90" || item.Price != 45 {
+			t.Fatalf("%s used a later duplicate: title %q, price %v", name, item.Title, item.Price)
+		}
+	}
+}

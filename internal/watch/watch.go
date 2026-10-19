@@ -131,6 +131,9 @@ func diffKnown(w store.Watch, prev store.Seen, it vinted.Item, trustSold bool) [
 // reported once even when it drifts off the page and back.
 func checkSearch(ctx context.Context, c *vinted.Client, w store.Watch, t SearchTarget, seen map[int64]store.Seen, baseline bool) (Result, error) {
 	var res Result
+	// Pages may overlap while the marketplace reorders results. The first
+	// occurrence owns this check: emit and persist each item only once.
+	visited := make(map[int64]bool)
 	// Watches stored before the cap existed may ask for more pages.
 	pages := min(max(w.Pages, 1), MaxSearchPages)
 	params := t.Params
@@ -141,6 +144,10 @@ func checkSearch(ctx context.Context, c *vinted.Client, w store.Watch, t SearchT
 			return Result{}, err
 		}
 		for _, it := range sp.Items {
+			if visited[it.ID] {
+				continue
+			}
+			visited[it.ID] = true
 			prev, known := seen[it.ID]
 			switch {
 			case known:

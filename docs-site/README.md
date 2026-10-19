@@ -41,3 +41,11 @@ is the default and ignores the OS preference (`enableSystem: false`); the nav to
 switches to light and the choice is remembered. Dark mode is a true black `#000000` page with
 white text and no decorative chrome. `app/icon.png`, `app/apple-icon.png`, `app/favicon.ico`
 and `app/opengraph-image.png` are generated from the logo.
+
+## Browser flow checks
+
+Run `npm ci`, `npm run build`, `npx e2e-web install chromium`, and
+`npm run test:e2e`. The pinned tester-army/e2e suite opens every MDX route
+and checks its heading, home navigation, static search index and mobile overflow.
+It makes no AI calls and uses no account credentials. This documentation suite
+does not replace the Go CLI integration tests or prove live marketplace acceptance.
