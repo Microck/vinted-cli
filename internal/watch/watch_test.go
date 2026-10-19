@@ -173,4 +173,16 @@ func TestSearchWatchDeduplicatesRepeatedItemsWithinCheck(t *testing.T) {
 	if len(result.Events) != 1 || len(result.Upserts) != 1 {
 		t.Fatalf("duplicate item produced %d events and %d upserts", len(result.Events), len(result.Upserts))
 	}
+	var eventItem, upsertItem vinted.Item
+	if err := json.Unmarshal(result.Events[0].Item, &eventItem); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(result.Upserts[0].Snapshot, &upsertItem); err != nil {
+		t.Fatal(err)
+	}
+	for name, item := range map[string]vinted.Item{"event": eventItem, "upsert": upsertItem} {
+		if item.Title != "Nike Air Max 90" || item.Price != 45 {
+			t.Fatalf("%s used a later duplicate: title %q, price %v", name, item.Title, item.Price)
+		}
+	}
 }
