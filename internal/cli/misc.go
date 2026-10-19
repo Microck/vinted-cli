@@ -184,6 +184,7 @@ func typed(s string) any {
 type doctorCheck struct {
 	Name   string `json:"name"`
 	OK     bool   `json:"ok"`
+	Warn   bool   `json:"warning,omitempty"`
 	Detail string `json:"detail,omitempty"`
 }
 
@@ -198,6 +199,8 @@ func (r doctorReport) Pretty(w io.Writer, color bool) {
 		mark := "ok"
 		if !c.OK {
 			mark = "FAIL"
+		} else if c.Warn {
+			mark = "WARN"
 		}
 		rows = append(rows, []string{mark, c.Name, c.Detail})
 	}
@@ -216,6 +219,8 @@ func (a *App) doctorCmd() *cobra.Command {
   site reachable  the profile's Vinted site answers (one request)
   session         the profile's session works and names the account (one request)
   schedule        the state of the watch timer (systemd on Linux, launchd on macOS)
+  renewal         a warning, not a failure, when the login's refresh token
+                  expires within 48 h and no background renewal is installed
 
 The proxy check sends nothing; an unusable proxy shows up as a failed site
 check. While a cooldown lasts the site and session checks are skipped (they
@@ -267,11 +272,19 @@ would be refused) and doctor exits 5. Any other failed check exits 1.`,
 					add("session", err, "")
 				} else {
 					add("session", nil, "logged in as "+me.Login)
+					if meta, err := a.Account.status(ctx); err == nil {
+						a.noteRenewal(meta.LastRefresh)
+					}
 				}
 			}
 			if u := a.serviceUnit(); u != nil {
 				state, _ := u.state()
 				add("schedule", nil, state)
+			}
+			if s, ok := a.Creds.Profiles[a.Profile]; ok {
+				if w := a.renewalWarning(s); w != "" {
+					rep.Checks = append(rep.Checks, doctorCheck{Name: "renewal", OK: true, Warn: true, Detail: w})
+				}
 			}
 			if err := a.Printer.Print(rep); err != nil {
 				return err

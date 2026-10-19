@@ -634,6 +634,13 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 		}
 		fmt.Fprintf(a.Stderr, "vinted: could not remove the %s session %s from the engine: %v\n", what, id, managedError(err))
 	}
+	// The token's lifetime runs from its JWT iat, else from before the
+	// import, so the renewal the engine makes right after it moves its
+	// expiry (noteRenewal) by a whole lifetime.
+	issued, refreshExpires := vinted.RefreshLifetime(cookies)
+	if issued.IsZero() || !issued.Before(refreshExpires) {
+		issued = time.Now()
+	}
 	if _, err := c.Connect(ctx, id, in); err != nil {
 		// A lost answer or a cancel may hide a completed import: remove the
 		// new session either way (forgetting a missing one is a no-op).
@@ -675,7 +682,8 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 		pending = append(pending, previous)
 	}
 	oldSession, hadSession := a.Creds.Profiles[a.Profile]
-	a.Creds.Profiles[a.Profile] = config.Session{GalletonID: id, Replaced: pending, UserID: me.ID, Login: me.Login, UpdatedAt: time.Now().UTC()}
+	now := time.Now().UTC()
+	a.Creds.Profiles[a.Profile] = config.Session{GalletonID: id, Replaced: pending, UserID: me.ID, Login: me.Login, UpdatedAt: now, RefreshIssued: issued.UTC(), RefreshExpires: refreshExpires.UTC()}
 	if err := a.saveCreds(); err != nil {
 		// The profile keeps its previous session, in memory too.
 		if hadSession {
@@ -699,7 +707,7 @@ func (a *App) managedLogin(ctx context.Context, export vinted.CookieExport, doma
 	// that cannot be deleted now stays recorded and is retried later, so no
 	// unreferenced credential is left renewing in the vault.
 	a.dropReplaced(ctx, c, pending)
-	return a.Printer.Print(a.currentStatus())
+	return nil
 }
 
 func hasCookie(list []cookiefile.Cookie, name string) bool {

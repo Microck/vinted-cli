@@ -62,6 +62,24 @@ func AccessExpiry(cookies []cookiefile.Cookie) time.Time {
 	return time.Time{}
 }
 
+// RefreshLifetime is when the refresh token among cookies was issued (its
+// JWT iat claim) and when it expires (the cookie's own expiry, else its JWT
+// exp claim); each is zero when unknown.
+func RefreshLifetime(cookies []cookiefile.Cookie) (issued, expires time.Time) {
+	for _, c := range cookies {
+		if c.Name == RefreshCookie && c.Value != "" {
+			if iat := int64(jwtClaims(c.Value).Iat); iat != 0 {
+				issued = time.Unix(iat, 0)
+			}
+			if c.Expires != nil && !c.Expires.IsZero() {
+				return issued, *c.Expires
+			}
+			return issued, jwtExpiry(c.Value)
+		}
+	}
+	return time.Time{}, time.Time{}
+}
+
 // ReadCookieExport reads cookies exported from a logged-in browser tab with
 // Galleton's parser: a Netscape cookies.txt, a Cookie-Editor, EditThisCookie,
 // DevTools or Playwright JSON list (bare or wrapped as {"url", "cookies"}),
@@ -151,6 +169,7 @@ func NormalizeSite(d string) string { return normalizeSite(d) }
 // allows to be non-integer, so it is read as flexInt.
 type claims struct {
 	Exp flexInt `json:"exp"`
+	Iat flexInt `json:"iat"`
 }
 
 // jwtClaims reads an unverified JWT. Verification is not needed: the claims

@@ -103,7 +103,7 @@ a challenge page is exit 5.
 
 ### auth
 
-- `auth login [--profile NAME] [--cookies FILE | --cookies-stdin] [--domain HOST]`
+- `auth login [--profile NAME] [--cookies FILE | --cookies-stdin] [--domain HOST] [--service | --no-service]`
   Default is the cookie import prompt: it asks for a cookie export, parsed by Galleton's
   `cookiefile` package (Netscape `cookies.txt`; Cookie-Editor, EditThisCookie, DevTools or
   Playwright JSON, bare or wrapped as `{"url":..., "cookies":[...]}`; or a raw `a=b; c=d`
@@ -115,12 +115,28 @@ a challenge page is exit 5.
   and the domain (from `--domain`, else the domain of the token cookies, as
   `profiles.NAME.domain` in config) and deletes the session it replaced. A rejected import
   is removed from the engine again and the Profile keeps its previous session.
-  Implicitly creates the Profile; the first Profile becomes default.
+  Implicitly creates the Profile; the first Profile becomes default. The Session records
+  `refresh_expires`, the expiry of the imported `refresh_token_web` (cookie expiry, else its
+  JWT `exp`), and `refresh_issued`. `refresh_issued` is the token's JWT `iat` (else the import time), and when the login itself,
+  `auth status --check`, `auth refresh` or `doctor` see a later engine renewal
+  (`last_refresh`), the expiry moves forward by the same lifetime, since each renewal issues
+  a new refresh token. After a successful login, when stdin and stderr are terminals, `--no-input`
+  is not set, `CI` is not `true` and no `VINTED_GALLETON_*` override is set, and the renewal
+  service is not installed yet, it asks on stderr `keep this login alive in the background?
+  [Y/n]`. Yes or an empty line runs the `auth service enable` code path and reports the unit on
+  stderr; end of input counts as no; no prints ``run `vinted auth service enable` later to turn it on``. `--service`
+  answers yes without asking and always runs the enable again, which retries a half-failed
+  one (works with `--no-input`; a failure is exit 1 with the login kept), `--no-service`
+  answers no; the two are exclusive (exit 2). The status is printed on stdout after the
+  choice.
 - `auth status [--check]` shows the stored Profile, account, `source: "galleton"`,
   `session_id`, and a `cooldown` object while the site is paused after a block. It is
   offline. `--check` adds the engine's view (`engine`: status, last and next renewal, access
   token expiry, cookie count) and an authenticated call, reported as `session_valid` (exit 5
-  during a cooldown). A Profile saved by an older version reports `needs_login`.
+  during a cooldown). A Profile saved by an older version reports `needs_login`. It also
+  shows `refresh_expires` and, when that is within 48 h and the renewal service is not
+  installed, a `warning` (also printed on stderr; never with `VINTED_GALLETON_*` overrides,
+  whose owner runs the engine); the exit code is unchanged.
 - `auth refresh` asks the engine to renew now (through the request gate) and prints status
   with the engine's view. A refused renewal is exit 3 and needs a new browser export.
 - `auth logout [--yes]` drops the stored reference, then deletes the engine's session. A
@@ -394,8 +410,10 @@ No MCP SDK.
   Sink's `type` (`ntfy`, `webhook`, `exec`) and `template` (`discord`, `slack` or unset). A
   rejected value is exit 2 and leaves the file untouched.
 - `doctor` checks: config parses, Sinks, proxy (shown without credentials), cooldown, Vinted
-  reachable, Session works, service unit state. Exit 1 if any check fails; exit 5,
-  without any network check, while a cooldown lasts.
+  reachable, Session works, service unit state, and a `renewal` line marked as a warning
+  (`"warning": true`, still `ok`) when the refresh token expires within 48 h and the renewal
+  service is not installed. Exit 1 if any check fails; exit 5, without any network check,
+  while a cooldown lasts.
 - `cooldown` shows the cooldown of the Profile's site (`{site, blocked, blocked_at,
   blocked_until, remaining, cause, request_interval, file}`); `cooldown clear [--yes]` lifts
   it (prompts, or needs `--yes`) and forgets the cached tokens. See section 11.

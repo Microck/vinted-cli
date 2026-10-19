@@ -114,6 +114,8 @@ vinted auth refresh           # renew now
 
 the engine starts with the first command that needs the account and stops ten seconds after the last one. to keep it renewing between commands (and after a reboot, once you log in), run `vinted auth service enable`; `vinted auth service status / disable / stop / run` manage it. details: [docs/galleton.md](docs/galleton.md).
 
+after a successful `vinted auth login` in a terminal it asks `keep this login alive in the background? [Y/n]`; yes runs `vinted auth service enable` for you. `--service` / `--no-service` answer without asking (`--service` works with `--no-input`); `--no-input`, CI and a non-terminal skip the question. without the service, `vinted auth status` and `vinted doctor` warn (without failing) when the login's refresh token expires within 48 hours.
+
 run multiple accounts side by side using profiles:
 
 ```bash
