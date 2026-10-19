@@ -258,6 +258,28 @@ func TestWatchKeepaliveReportsAnEngineRenewalBlock(t *testing.T) {
 	}
 }
 
+// A running MCP server reports a renewal block the engine hit on its own
+// between tool calls.
+func TestMCPServerReportsAnEngineRenewalBlock(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	h.fake.setBlock("/web/api/auth/refresh", datadomeBlock(t))
+	if r := h.run("", "auth", "refresh"); r.code != 5 {
+		t.Fatalf("blocked renewal: exit %d\n%s", r.code, r.stderr)
+	}
+	h.must("", "cooldown", "clear", "--yes")
+	t.Cleanup(cli.UseServiceLoop(50*time.Millisecond, nil))
+	s := h.mcpServer()
+	deadline := time.Now().Add(30 * time.Second)
+	for decode[map[string]any](t, h.must("", "cooldown").stdout)["blocked"] != true {
+		if time.Now().After(deadline) {
+			t.Fatal("the mcp server did not record the engine's renewal block")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	s.close()
+}
+
 // `auth service run` started during a cooldown waits for it to end instead
 // of exiting, then starts the engine.
 func TestAuthServiceRunWaitsOutACooldown(t *testing.T) {

@@ -8,10 +8,12 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Microck/vinted-cli/internal/config"
+	"github.com/Microck/vinted-cli/internal/galleton"
 	"github.com/Microck/vinted-cli/internal/mcp"
 	"github.com/Microck/vinted-cli/internal/output"
 )
@@ -43,12 +45,47 @@ Examples:
 					fmt.Fprintf(a.Stderr, "vinted: session engine: %v\n", err)
 				}
 			}
+			// Between tool calls the engine renews on its own; report a
+			// renewal the bot protection blocked, as `auth service run` does.
+			ctx, stop := context.WithCancel(cmd.Context())
+			defer stop()
+			go a.watchEngineBlocks(ctx)
 			srv := &mcp.Server{Version: a.Version, Run: a.runCommand}
-			return srv.Serve(cmd.Context(), a.Stdin, a.Stdout)
+			return srv.Serve(ctx, a.Stdin, a.Stdout)
 		},
 	}
 	cmd.AddCommand(a.mcpInstallCmd())
 	return cmd
+}
+
+// watchEngineBlocks checks the running engine for blocked renewals every
+// serviceTick until ctx ends. It attaches on its own each time and reads no
+// state the tool calls change, so it can run beside them.
+func (a *App) watchEngineBlocks(ctx context.Context) {
+	reported := map[string]time.Time{}
+	tick := time.NewTicker(serviceTick)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+		var c *galleton.Client
+		var err error
+		if galleton.Configured() {
+			c, err = galleton.FromEnv()
+		} else {
+			c, err = galleton.IfRunning(ctx, a.sessionDir())
+		}
+		if err != nil || c == nil {
+			continue
+		}
+		if err := a.recordEngineBlocks(ctx, c, reported); err != nil && ctx.Err() == nil {
+			fmt.Fprintf(a.Stderr, "vinted: could not check the session engine for blocked renewals: %v\n", err)
+		}
+		c.Close()
+	}
 }
 
 func (a *App) mcpInstallCmd() *cobra.Command {
