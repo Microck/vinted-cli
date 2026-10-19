@@ -144,7 +144,6 @@ func (a *App) recordEngineBlocks(ctx context.Context, c *galleton.Client, report
 		if s.Status != "retry_wait" || s.Error == nil || s.Error.Code != "upstream_blocked" || !time.Now().Before(s.NextRefresh) || reported[s.ID].Equal(s.NextRefresh) {
 			continue
 		}
-		reported[s.ID] = s.NextRefresh
 		base := vinted.ProviderBase(s.Provider, a.Client.Base)
 		if base == "" {
 			continue
@@ -154,6 +153,7 @@ func (a *App) recordEngineBlocks(ctx context.Context, c *galleton.Client, report
 			continue
 		}
 		if until, ok := active[u.Host]; ok && !until.Before(s.NextRefresh) {
+			reported[s.ID] = s.NextRefresh
 			continue // a running cooldown already covers the engine's retry
 		}
 		g := throttle.New(a.Paths.StateDir, base, throttle.Options{Clock: throttleClock})
@@ -166,6 +166,8 @@ func (a *App) recordEngineBlocks(ctx context.Context, c *galleton.Client, report
 		if err := c.Pause(ctx, s.Provider, wait); err != nil {
 			return fmt.Errorf("could not pause the session engine for the cooldown on %s: %w", u.Host, managedError(err))
 		}
+		// Only now handled: a failure above is retried on the next check.
+		reported[s.ID] = s.NextRefresh
 	}
 	return nil
 }
