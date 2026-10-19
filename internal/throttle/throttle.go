@@ -401,6 +401,26 @@ func (g *Gate) Cooldowns() (map[string]time.Time, error) {
 	return out, nil
 }
 
+// HoldCooldowns runs fn with every site's running cooldown while it holds the
+// state lock, so no process can start or clear a cooldown until fn returns.
+func (g *Gate) HoldCooldowns(ctx context.Context, fn func(map[string]time.Time) error) error {
+	if err := os.MkdirAll(filepath.Dir(g.path), 0o700); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(ctx, lockWait)
+	defer cancel()
+	lock, err := filelock.Acquire(ctx, g.path+".lock")
+	if err != nil {
+		return fmt.Errorf("waiting for %s.lock: %w", g.path, err)
+	}
+	defer filelock.Release(lock)
+	cooldowns, err := g.Cooldowns()
+	if err != nil {
+		return err
+	}
+	return fn(cooldowns)
+}
+
 func (g *Gate) status(s site) Status {
 	st := Status{Site: g.host, RequestInterval: g.interval.String(), File: g.path}
 	now := g.clock.Now()

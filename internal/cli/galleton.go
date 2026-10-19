@@ -308,6 +308,7 @@ func (a *App) galletonClient(ctx context.Context) (*galleton.Client, error) {
 			c.Close()
 			return nil, err
 		}
+		a.dropPending(ctx, c)
 		a.sessionClient = c
 		return c, nil
 	}
@@ -320,9 +321,10 @@ func (a *App) galletonClient(ctx context.Context) (*galleton.Client, error) {
 }
 
 // openEngine attaches to the engine in dir, starting it if needed, and
-// pauses it for any running cooldown. The engine renews due sessions the
-// moment it starts, before a pause can reach it, so during a cooldown it is
-// only attached to, never started.
+// pauses it for any running cooldown. During a cooldown it is only attached
+// to, never started. A start begins with every provider held, which
+// releaseLaunchHold ends under the startup lock, so a block another process
+// records while the engine starts holds it too.
 func (a *App) openEngine(ctx context.Context, dir string) (*galleton.Client, error) {
 	setup, err := a.engineSetup()
 	if err != nil {
@@ -336,10 +338,11 @@ func (a *App) openEngine(ctx context.Context, dir string) (*galleton.Client, err
 			return err
 		}
 		if len(pauses) > 0 {
-			return &engineHeldError{&vinted.Error{Kind: vinted.KindBlocked, Msg: "a cooldown is running, so the session engine stays stopped until it ends: once started it would renew sessions against the blocked site before it could be paused. Check `vinted cooldown status`"}}
+			return &engineHeldError{&vinted.Error{Kind: vinted.KindBlocked, Msg: "a cooldown is running, so the session engine stays stopped until it ends. Check `vinted cooldown status`"}}
 		}
 		return nil
 	}
+	setup.Launched = func(c *galleton.Client) error { return a.releaseLaunchHold(ctx, c, setup.Adapter) }
 	c, err := galleton.Open(ctx, dir, setup)
 	if err != nil {
 		return nil, err
@@ -348,7 +351,57 @@ func (a *App) openEngine(ctx context.Context, dir string) (*galleton.Client, err
 		c.Close()
 		return nil, err
 	}
+	a.dropPending(ctx, c)
 	return c, nil
+}
+
+// releaseLaunchHold ends the pause a freshly started engine begins with:
+// providers a cooldown covers stay paused for it, the rest resume. It runs
+// under the startup lock, after the engine is up, and reads the cooldowns and
+// resumes while it holds the cooldown state lock. A command that records a
+// block writes the cooldown under that lock before it pauses the engine, so
+// its block is either seen here or written, and paused, only after this.
+// Sessions logout queued for deletion, including ones another command queued
+// since this one started, go first, while nothing renews. It fails closed: on
+// an error the hold lapses on its own.
+func (a *App) releaseLaunchHold(ctx context.Context, c *galleton.Client, adapter []byte) error {
+	names, err := galleton.ProviderNames(adapter)
+	if err != nil {
+		return err
+	}
+	a.reloadPending()
+	a.dropPending(ctx, c)
+	return a.Gate.HoldCooldowns(ctx, func(blocked map[string]time.Time) error {
+		pauses := a.pausesFor(blocked)
+		for _, name := range names {
+			if d, ok := pauses[name]; ok {
+				err = c.Pause(ctx, name, d)
+			} else {
+				err = c.Resume(ctx, name)
+			}
+			if err != nil {
+				return fmt.Errorf("could not release the session engine's start hold on %s: %w", name, managedError(err))
+			}
+		}
+		return nil
+	})
+}
+
+// reloadPending adds sessions other commands queued for deletion since this
+// one read credentials.toml, as if it had read them then.
+func (a *App) reloadPending() {
+	disk, err := config.LoadCredentials(a.Paths.CredentialsFile)
+	if err != nil {
+		fmt.Fprintf(a.Stderr, "vinted: could not read the logged-out sessions left to remove: %v\n", err)
+		return
+	}
+	for _, id := range disk.Forget {
+		// One this command already deleted is in loadedCreds only.
+		if !slices.Contains(a.Creds.Forget, id) && !slices.Contains(a.loadedCreds.Forget, id) {
+			a.Creds.Forget = append(a.Creds.Forget, id)
+			a.loadedCreds.Forget = append(a.loadedCreds.Forget, id)
+		}
+	}
 }
 
 // engineHeldError is openEngine refusing to start the engine during a
@@ -367,6 +420,11 @@ func (a *App) enginePauses() (map[string]time.Duration, error) {
 	if err != nil {
 		return nil, err
 	}
+	return a.pausesFor(blocked), nil
+}
+
+// pausesFor maps running cooldowns by host to engine provider pauses.
+func (a *App) pausesFor(blocked map[string]time.Time) map[string]time.Duration {
 	current := ""
 	if u, err := url.Parse(a.Client.Base); err == nil {
 		current = u.Host
@@ -387,7 +445,7 @@ func (a *App) enginePauses() (map[string]time.Duration, error) {
 			pauses[provider] = d
 		}
 	}
-	return pauses, nil
+	return pauses
 }
 
 // carryCooldown pauses an attached engine for the rest of any running
@@ -406,24 +464,65 @@ func (a *App) carryCooldown(ctx context.Context, c *galleton.Client) error {
 	return nil
 }
 
-// forgetManagedProfile deletes a profile's daemon session before its local
-// reference goes. A failed deletion keeps the reference for a retry. It does
-// not log the browser out.
-func (a *App) forgetManagedProfile(ctx context.Context, profile string) error {
-	s, ok := a.Creds.Profiles[profile]
-	if !ok || s.GalletonID == "" {
+// dropProfileSession removes a profile from credentials.toml and then deletes
+// its engine sessions. The file is written first, with the session ids moved
+// to the pending list, so a failed write leaves everything as it was and the
+// file never names a session the engine already deleted. A deletion that
+// fails stays pending: the next command that reaches the engine retries it.
+// It does not log the browser out.
+func (a *App) dropProfileSession(ctx context.Context, profile string) error {
+	if s, ok := a.Creds.Profiles[profile]; ok {
+		for _, id := range append(append([]string{}, s.Replaced...), s.GalletonID) {
+			if id != "" && !slices.Contains(a.Creds.Forget, id) {
+				a.Creds.Forget = append(a.Creds.Forget, id)
+			}
+		}
+		delete(a.Creds.Profiles, profile)
+		if err := a.saveCreds(); err != nil {
+			return err
+		}
+	}
+	if len(a.Creds.Forget) == 0 {
 		return nil
 	}
 	c, err := a.galletonClient(ctx)
-	if err != nil {
-		return managedError(err)
+	var held *engineHeldError
+	if errors.As(err, &held) {
+		// A stopped engine renews nothing; the deletion waits for its start.
+		fmt.Fprintf(a.Stderr, "vinted: the session engine stays stopped during the cooldown; it deletes the logged-out session when it next starts\n")
+		return nil
 	}
-	for _, id := range append(append([]string{}, s.Replaced...), s.GalletonID) {
-		if err := c.Forget(ctx, id); err != nil {
-			return managedError(err)
-		}
+	if err != nil {
+		return fmt.Errorf("the profile is logged out here, but its session is still in the session engine and is deleted by the next command that reaches it: %w", managedError(err))
+	}
+	a.dropPending(ctx, c)
+	if n := len(a.Creds.Forget); n > 0 {
+		return fmt.Errorf("the profile is logged out here, but the session engine could not delete %d session(s) yet; the next command that reaches it retries", n)
 	}
 	return nil
+}
+
+// dropPending deletes the engine sessions logout and profile remove left
+// pending, and records the ones that still could not be deleted. Failure is
+// a warning: they are retried on the next attach.
+func (a *App) dropPending(ctx context.Context, c *galleton.Client) {
+	if len(a.Creds.Forget) == 0 {
+		return
+	}
+	var left []string
+	for _, id := range a.Creds.Forget {
+		if err := c.Forget(ctx, id); err != nil {
+			fmt.Fprintf(a.Stderr, "vinted: could not remove the logged-out session %s from the engine yet (it is retried later): %v\n", id, managedError(err))
+			left = append(left, id)
+		}
+	}
+	if len(left) == len(a.Creds.Forget) {
+		return
+	}
+	a.Creds.Forget = left
+	if err := a.saveCreds(); err != nil {
+		fmt.Fprintf(a.Stderr, "vinted: could not record the logged-out sessions left to remove: %v\n", err)
+	}
 }
 
 // dropReplaced deletes engine sessions a login replaced, and records in

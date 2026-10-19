@@ -70,6 +70,35 @@ func TestStaleCommandCannotResurrectLogout(t *testing.T) {
 	}
 }
 
+// Pending engine deletions merge as a set: a command removes only the ids it
+// handled and keeps ones another command queued meanwhile.
+func TestMergeKeepsOtherPendingDeletions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credentials.toml")
+	before := Credentials{Forget: []string{"vinted-a"}, Profiles: map[string]Session{"two": {GalletonID: "vinted-b"}}}
+	if err := SaveCredentials(path, before); err != nil {
+		t.Fatal(err)
+	}
+	// Another command logged "two" out while this one deleted vinted-a.
+	other := CloneCredentials(before)
+	other.Forget = append(other.Forget, "vinted-b")
+	delete(other.Profiles, "two")
+	if _, err := MergeCredentials(path, before, other); err != nil {
+		t.Fatal(err)
+	}
+	mine := CloneCredentials(before)
+	mine.Forget = nil
+	merged, err := MergeCredentials(path, before, mine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged.Forget) != 1 || merged.Forget[0] != "vinted-b" || len(merged.Profiles) != 0 {
+		t.Fatalf("merged %+v", merged)
+	}
+	if before.Forget[0] != "vinted-a" {
+		t.Fatal("CloneCredentials shared the pending list")
+	}
+}
+
 func TestMergeIgnoresTimeRepresentation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials.toml")
 	instant := time.Date(2026, 10, 4, 12, 0, 0, 0, time.FixedZone("", 5*3600+30*60))

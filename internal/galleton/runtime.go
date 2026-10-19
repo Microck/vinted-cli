@@ -27,6 +27,14 @@ import (
 const hostCommand = "__galleton-host"
 const idleGrace = 10 * time.Second
 
+// launchHold is how long a freshly started daemon keeps every provider
+// paused. It holds from before the first renewal scan until the launching
+// command, still under the startup lock, calls Setup.Launched, so a block
+// another process records while the daemon starts cannot be missed. It
+// outlasts the launcher's readiness wait, and lapses on its own if the
+// launcher dies first.
+const launchHold = 60 * time.Second
+
 // ProxyEnv carries the egress proxy from the CLI to the host and from the host
 // to the daemon. The adapter names it with proxy_env, so a proxy URL with
 // credentials never lands in a file or on a command line.
@@ -47,6 +55,12 @@ type Setup struct {
 	// the startup lock, after the last attach attempt failed); an error stops
 	// the start and is what Open returns. Not part of the fingerprint.
 	MayLaunch func() error
+	// Launched, when set, is called with the client once a daemon this Open
+	// started is ready, still under the startup lock. The daemon starts with
+	// every provider paused for launchHold; Launched resumes the ones that
+	// may run. An error closes the client, leaves the hold to lapse, and is
+	// what Open returns. Not part of the fingerprint.
+	Launched func(*Client) error
 }
 
 func (s Setup) fingerprint() string {
@@ -170,6 +184,12 @@ func Open(ctx context.Context, dir string, setup Setup) (*Client, error) {
 	for {
 		c, err := connect()
 		if err == nil {
+			if free && setup.Launched != nil {
+				if err := setup.Launched(c); err != nil {
+					c.Close()
+					return nil, err
+				}
+			}
 			return c, nil
 		}
 		if !free {
@@ -304,7 +324,12 @@ func RunHost(dir string) error {
 	if err := init.Run(); err != nil {
 		return errors.New("could not initialize private session storage")
 	}
-	cmd := exec.Command(binary, "serve", "--dir", dir, "--config", filepath.Join(dir, "adapters.json"), "--listen", "127.0.0.1:0")
+	args := []string{"serve", "--dir", dir, "--config", filepath.Join(dir, "adapters.json"), "--listen", "127.0.0.1:0"}
+	hold, err := holdArgs(adapter)
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(binary, append(args, hold...)...)
 	cmd.Env = withProxy(cleanEnv(), setup.Proxy)
 	noWindow(cmd)
 	pipe, err := cmd.StderrPipe()
@@ -525,4 +550,35 @@ func Stop(ctx context.Context, dir string) error {
 		filelock.Release(vault)
 	}
 	return err
+}
+
+// ProviderNames lists the providers an adapter configures.
+func ProviderNames(adapter []byte) ([]string, error) {
+	var cfg struct {
+		Providers []struct {
+			Name string `json:"name"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(adapter, &cfg); err != nil {
+		return nil, errors.New("invalid session engine adapter")
+	}
+	names := make([]string, len(cfg.Providers))
+	for i, p := range cfg.Providers {
+		names[i] = p.Name
+	}
+	return names, nil
+}
+
+// holdArgs pauses every provider of the adapter for launchHold from the
+// daemon's start, before its first renewal scan.
+func holdArgs(adapter []byte) ([]string, error) {
+	names, err := ProviderNames(adapter)
+	if err != nil {
+		return nil, err
+	}
+	args := make([]string, 0, 2*len(names))
+	for _, name := range names {
+		args = append(args, "--pause", fmt.Sprintf("%s=%d", name, int(launchHold/time.Second)))
+	}
+	return args, nil
 }

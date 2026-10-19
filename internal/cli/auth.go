@@ -309,16 +309,10 @@ func (a *App) authLogoutCmd() *cobra.Command {
 		Short: "Forget the active profile's session (keeps watches and config)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if _, ok := a.Creds.Profiles[a.Profile]; !ok {
-				return a.Printer.Print(authStatus{Profile: a.Profile})
-			}
-			// Forget the engine's copy first; a failure keeps the reference
-			// for a retry. This does not log the browser out.
-			if err := a.forgetManagedProfile(cmd.Context(), a.Profile); err != nil {
-				return err
-			}
-			delete(a.Creds.Profiles, a.Profile)
-			if err := a.saveCreds(); err != nil {
+			// credentials.toml drops the profile before the engine deletes its
+			// session, so the file never names a deleted session; a deletion
+			// that fails is retried later. This does not log the browser out.
+			if err := a.dropProfileSession(cmd.Context(), a.Profile); err != nil {
 				return err
 			}
 			return a.Printer.Print(authStatus{Profile: a.Profile})
@@ -404,11 +398,7 @@ func (a *App) profileRemoveCmd() *cobra.Command {
 			if err := a.confirm(yes, fmt.Sprintf("Remove profile %q, its session and its watches?", name)); err != nil {
 				return err
 			}
-			if err := a.forgetManagedProfile(cmd.Context(), name); err != nil {
-				return err
-			}
-			delete(a.Creds.Profiles, name)
-			if err := a.saveCreds(); err != nil {
+			if err := a.dropProfileSession(cmd.Context(), name); err != nil {
 				return err
 			}
 			delete(a.Cfg.Profiles, name)

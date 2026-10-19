@@ -139,6 +139,11 @@ type Session struct {
 }
 
 type Credentials struct {
+	// Forget are engine sessions of profiles that logout or profile remove
+	// already dropped from this file but the engine has not deleted yet; the
+	// next command that reaches the engine deletes them. Dropping the profile
+	// first means the file never names a session that is already gone.
+	Forget   []string           `toml:"forget_galleton_ids,omitempty"`
 	Profiles map[string]Session `toml:"profiles"`
 }
 

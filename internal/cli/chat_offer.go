@@ -212,6 +212,10 @@ With --format jsonl, incoming messages are printed as JSON objects instead.`,
 				case <-ctx.Done():
 					return nil
 				case <-tick.C:
+					// A renewal the engine ran on its own since the last poll
+					// may have been blocked; record its cooldown first, so this
+					// poll stops on it with exit 5 instead of on the paused session.
+					a.reportEngineBlocks(ctx)
 					// Each poll is its own command for the request budget.
 					a.Gate.Reset()
 					latest, err := a.Client.Conversation(ctx, id)
@@ -261,5 +265,6 @@ With --format jsonl, incoming messages are printed as JSON objects instead.`,
 	return cmd
 }
 
-// minChatPoll is the fastest `chat open` may poll a conversation.
-const minChatPoll = 10 * time.Second
+// minChatPoll is the fastest `chat open` may poll a conversation. Tests
+// lower it.
+var minChatPoll = 10 * time.Second

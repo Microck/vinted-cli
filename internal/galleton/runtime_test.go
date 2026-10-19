@@ -105,6 +105,55 @@ func TestBundledConcurrentStartupAndLeaseLifetime(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A daemon starts with every provider paused; Launched runs once, for the
+// Open that started it, while that hold is on, and its resume ends it.
+func TestBundledStartHoldsProvidersUntilLaunched(t *testing.T) {
+	dir := bundledRuntime(t)
+	var calls int
+	setup := testSetup
+	setup.Launched = func(c *Client) error {
+		calls++
+		providers, err := c.sdk.Providers(context.Background())
+		if err != nil {
+			return err
+		}
+		if len(providers) != 1 || providers[0].PausedUntil == nil || time.Until(*providers[0].PausedUntil) > launchHold {
+			return fmt.Errorf("providers at launch: %+v", providers)
+		}
+		return c.Resume(context.Background(), "vinted-test")
+	}
+	c, err := Open(context.Background(), dir, setup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	again, err := Open(context.Background(), dir, setup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again.Close()
+	if calls != 1 {
+		t.Fatalf("Launched ran %d times, want once for the start", calls)
+	}
+	providers, err := c.sdk.Providers(context.Background())
+	if err != nil || len(providers) != 1 || providers[0].PausedUntil != nil {
+		t.Fatalf("providers after Launched: %+v %v", providers, err)
+	}
+}
+
+func TestHoldArgsPauseEveryProvider(t *testing.T) {
+	args, err := holdArgs([]byte(`{"providers":[{"name":"vinted"},{"name":"vinted-fr"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(args, " "); got != "--pause vinted=60 --pause vinted-fr=60" {
+		t.Fatalf("hold args %q", got)
+	}
+	if _, err := holdArgs([]byte(`not json`)); err == nil {
+		t.Fatal("accepted an invalid adapter")
+	}
+}
 func TestBundledIdleShutdownAndRestart(t *testing.T) {
 	dir := bundledRuntime(t)
 	c, err := Open(context.Background(), dir, testSetup)
