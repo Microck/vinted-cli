@@ -283,3 +283,37 @@ func TestTokenCache(t *testing.T) {
 		t.Fatal("a guest jar about to expire is not worth reusing")
 	}
 }
+
+// No process can start a cooldown while another holds the cooldowns: a block
+// waits until the holder is done, so the holder never acts on a stale view.
+func TestHoldCooldownsKeepsBlocksOut(t *testing.T) {
+	dir := t.TempDir()
+	holder := New(dir, "https://www.vinted.es", Options{})
+	other := New(dir, "https://www.vinted.fr", Options{})
+	blocked := make(chan struct{})
+	err := holder.HoldCooldowns(context.Background(), func(seen map[string]time.Time) error {
+		if len(seen) != 0 {
+			t.Errorf("cooldowns at start: %v", seen)
+		}
+		go func() {
+			if _, err := other.Block("test", time.Hour); err != nil {
+				t.Error(err)
+			}
+			close(blocked)
+		}()
+		select {
+		case <-blocked:
+			t.Error("a block was recorded while the cooldowns were held")
+		case <-time.After(300 * time.Millisecond):
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-blocked
+	cd, err := holder.Cooldowns()
+	if err != nil || len(cd) != 1 {
+		t.Fatalf("cooldowns after the hold: %v %v", cd, err)
+	}
+}

@@ -357,48 +357,34 @@ func (a *App) openEngine(ctx context.Context, dir string) (*galleton.Client, err
 
 // releaseLaunchHold ends the pause a freshly started engine begins with:
 // providers a cooldown covers stay paused for it, the rest resume. It runs
-// under the startup lock, after the engine is up. A command that records a
-// block writes the cooldown before it pauses the engine, and one without a
-// lease waits for the startup lock first (galleton.IfRunning), so its pause
-// lands after this. The cooldowns are read again after the resume, so even a
-// pause that slipped in before it is restored. Sessions logout queued for
-// deletion, including ones another command queued since this one started,
-// go first, while nothing renews. It fails closed: on an error the hold
-// lapses on its own.
+// under the startup lock, after the engine is up, and reads the cooldowns and
+// resumes while it holds the cooldown state lock. A command that records a
+// block writes the cooldown under that lock before it pauses the engine, so
+// its block is either seen here or written, and paused, only after this.
+// Sessions logout queued for deletion, including ones another command queued
+// since this one started, go first, while nothing renews. It fails closed: on
+// an error the hold lapses on its own.
 func (a *App) releaseLaunchHold(ctx context.Context, c *galleton.Client, adapter []byte) error {
 	names, err := galleton.ProviderNames(adapter)
 	if err != nil {
 		return err
 	}
-	pauses, err := a.enginePauses()
-	if err != nil {
-		return err
-	}
 	a.reloadPending()
 	a.dropPending(ctx, c)
-	for _, name := range names {
-		if d, ok := pauses[name]; ok {
-			err = c.Pause(ctx, name, d)
-		} else {
-			err = c.Resume(ctx, name)
+	return a.Gate.HoldCooldowns(ctx, func(blocked map[string]time.Time) error {
+		pauses := a.pausesFor(blocked)
+		for _, name := range names {
+			if d, ok := pauses[name]; ok {
+				err = c.Pause(ctx, name, d)
+			} else {
+				err = c.Resume(ctx, name)
+			}
+			if err != nil {
+				return fmt.Errorf("could not release the session engine's start hold on %s: %w", name, managedError(err))
+			}
 		}
-		if err != nil {
-			return fmt.Errorf("could not release the session engine's start hold on %s: %w", name, managedError(err))
-		}
-	}
-	after, err := a.enginePauses()
-	if err != nil {
-		return err
-	}
-	for name, d := range after {
-		if _, held := pauses[name]; held {
-			continue
-		}
-		if err := c.Pause(ctx, name, d); err != nil {
-			return fmt.Errorf("could not pause the session engine for the cooldown on %s: %w", name, managedError(err))
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // reloadPending adds sessions other commands queued for deletion since this
@@ -434,6 +420,11 @@ func (a *App) enginePauses() (map[string]time.Duration, error) {
 	if err != nil {
 		return nil, err
 	}
+	return a.pausesFor(blocked), nil
+}
+
+// pausesFor maps running cooldowns by host to engine provider pauses.
+func (a *App) pausesFor(blocked map[string]time.Time) map[string]time.Duration {
 	current := ""
 	if u, err := url.Parse(a.Client.Base); err == nil {
 		current = u.Host
@@ -454,7 +445,7 @@ func (a *App) enginePauses() (map[string]time.Duration, error) {
 			pauses[provider] = d
 		}
 	}
-	return pauses, nil
+	return pauses
 }
 
 // carryCooldown pauses an attached engine for the rest of any running
