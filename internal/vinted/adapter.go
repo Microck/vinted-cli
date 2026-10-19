@@ -144,8 +144,9 @@ func siteProvider(base, proxyEnv string, interval time.Duration) adapterProvider
 		ProtectedCookies: []string{AccessCookie, RefreshCookie},
 		// A Datadome or Cloudflare challenge, or any 403 that is not one of
 		// Vinted's JSON errors, means "come back later", not "log in again".
+		// Datadome sometimes serves its challenge with a 200.
 		BlockSignatures: []blockSignature{
-			{Status: []int{403}, BodyContains: "captcha-delivery.com"},
+			{Status: []int{200, 403}, BodyContains: "captcha-delivery.com"},
 			{Status: []int{403, 503}, Header: "Cf-Mitigated", HeaderContains: "challenge"},
 			{Status: []int{403}, NotJSON: true},
 		},

@@ -3,7 +3,7 @@ module github.com/Microck/vinted-cli
 go 1.25.0
 
 require (
-	github.com/Microck/galleton v0.1.0
+	github.com/Microck/galleton v0.1.1
 	github.com/adrg/xdg v0.5.3
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2

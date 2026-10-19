@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -228,6 +229,26 @@ func TestBlockedEngineRenewalStartsTheCooldown(t *testing.T) {
 	}
 	if until := h.pausedUntil(); until == nil {
 		t.Fatal("the engine was not paused after its renewal was blocked")
+	}
+}
+
+// Datadome can answer a renewal with its challenge page and HTTP 200: that is
+// a block, not a renewal that broke the session.
+func TestEngineRenewalChallengeServedWith200IsABlock(t *testing.T) {
+	h := newHarness(t)
+	id := decode[map[string]any](t, h.login().stdout)["session_id"].(string)
+	h.fake.setBlock("/web/api/auth/refresh", &fakeBlock{status: http.StatusOK, body: fixture(t, "datadome_403.html")})
+	if r := h.run("", "auth", "refresh"); r.code != 5 {
+		t.Fatalf("200 challenge on renewal: exit %d\n%s", r.code, r.stderr)
+	}
+	if cd := decode[map[string]any](t, h.must("", "cooldown").stdout); cd["blocked"] != true {
+		t.Fatalf("no cooldown after a 200 challenge: %v", cd)
+	}
+	if until := h.pausedUntil(); until == nil {
+		t.Fatal("the engine was not paused after a 200 challenge")
+	}
+	if st := decode[map[string]any](t, h.must("", "auth", "status").stdout); st["session_id"] != id || st["logged_in"] != true {
+		t.Fatalf("status after a 200 challenge: %v", st)
 	}
 }
 

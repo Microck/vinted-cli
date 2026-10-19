@@ -321,9 +321,10 @@ func (a *App) galletonClient(ctx context.Context) (*galleton.Client, error) {
 }
 
 // openEngine attaches to the engine in dir, starting it if needed, and
-// pauses it for any running cooldown. The engine renews due sessions the
-// moment it starts, before a pause can reach it, so during a cooldown it is
-// only attached to, never started.
+// pauses it for any running cooldown. During a cooldown it is only attached
+// to, never started. A start begins with every provider held, which
+// releaseLaunchHold ends under the startup lock, so a block another process
+// records while the engine starts holds it too.
 func (a *App) openEngine(ctx context.Context, dir string) (*galleton.Client, error) {
 	setup, err := a.engineSetup()
 	if err != nil {
@@ -337,10 +338,11 @@ func (a *App) openEngine(ctx context.Context, dir string) (*galleton.Client, err
 			return err
 		}
 		if len(pauses) > 0 {
-			return &engineHeldError{&vinted.Error{Kind: vinted.KindBlocked, Msg: "a cooldown is running, so the session engine stays stopped until it ends: once started it would renew sessions against the blocked site before it could be paused. Check `vinted cooldown status`"}}
+			return &engineHeldError{&vinted.Error{Kind: vinted.KindBlocked, Msg: "a cooldown is running, so the session engine stays stopped until it ends. Check `vinted cooldown status`"}}
 		}
 		return nil
 	}
+	setup.Launched = func(c *galleton.Client) error { return a.releaseLaunchHold(ctx, c, setup.Adapter) }
 	c, err := galleton.Open(ctx, dir, setup)
 	if err != nil {
 		return nil, err
@@ -351,6 +353,35 @@ func (a *App) openEngine(ctx context.Context, dir string) (*galleton.Client, err
 	}
 	a.dropPending(ctx, c)
 	return c, nil
+}
+
+// releaseLaunchHold ends the pause a freshly started engine begins with:
+// providers a cooldown covers stay paused for it, the rest resume. It runs
+// under the startup lock, after the engine is up, so a block another process
+// records later reaches the engine after this and is never undone by it.
+// Sessions logout queued for deletion go first, while nothing renews. It
+// fails closed: on an error the hold lapses on its own.
+func (a *App) releaseLaunchHold(ctx context.Context, c *galleton.Client, adapter []byte) error {
+	names, err := galleton.ProviderNames(adapter)
+	if err != nil {
+		return err
+	}
+	pauses, err := a.enginePauses()
+	if err != nil {
+		return err
+	}
+	a.dropPending(ctx, c)
+	for _, name := range names {
+		if d, ok := pauses[name]; ok {
+			err = c.Pause(ctx, name, d)
+		} else {
+			err = c.Resume(ctx, name)
+		}
+		if err != nil {
+			return fmt.Errorf("could not release the session engine's start hold on %s: %w", name, managedError(err))
+		}
+	}
+	return nil
 }
 
 // engineHeldError is openEngine refusing to start the engine during a

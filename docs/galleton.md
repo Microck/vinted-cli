@@ -8,7 +8,7 @@ vinted me show
 ```
 
 Release binaries contain a pinned [Galleton](https://github.com/Microck/galleton) daemon
-(v0.1.0) for their OS and architecture. It holds the account's cookies in an encrypted vault,
+(v0.1.1) for their OS and architecture. It holds the account's cookies in an encrypted vault,
 renews the access token through Vinted's refresh endpoint, keeps the cookies every response
 sets, and sends every account request with them attached. Apart from reading the export during
 `vinted auth login`, the CLI never holds an account cookie, and it never sees a renewed one, so no
@@ -96,11 +96,16 @@ so on, plus `vinted-custom` for a `VINTED_BASE_URL`.
 - **Cookie scope.** www.vinted.com shares the tokens with its gateway api.www.vinted.com
   through `.www.vinted.com`; national sites share theirs with `api.vinted.xx` through
   `.vinted.xx`.
-- **Blocks.** A Datadome or Cloudflare challenge, or a 403 that is not a Vinted JSON error,
-  during a renewal is a temporary refusal: the engine backs off and keeps the credentials.
+- **Blocks.** A Datadome or Cloudflare challenge (Datadome's even when served with HTTP
+  200), or a 403 that is not a Vinted JSON error, during a renewal is a temporary refusal:
+  the engine backs off and keeps the credentials.
   When a CLI request is blocked, the CLI starts its cooldown and pauses the engine's provider
   for as long, so no renewal goes out meanwhile; the pause survives an engine restart.
-  `vinted cooldown clear` lifts both.
+  `vinted cooldown clear` lifts both. During a cooldown the engine is not started. A start
+  begins with every site paused (`galleton serve --pause`, 60 s at most); the starting
+  command deletes sessions a logout left queued and then resumes each site no cooldown
+  covers, all under the startup lock, so a block another process records meanwhile still
+  holds the engine.
 - **Pacing.** The CLI's request gate (one request per `request_interval`, two seconds by
   default, per site, shared by every process) stays in front of every engine call, and the
   engine spaces its own calls, renewals included, by the same interval.
