@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// guest is the anonymous cookie jar public reads run on when no Account is
-// logged in: even /api/v2 reads need an (anonymous) access token. Vinted's
+// guest is the anonymous cookie jar all public reads run on, independent
+// of the stored Account: even /api/v2 reads need an (anonymous) access token. Vinted's
 // home page mints one; it is minted again rather than refreshed, so no
 // refresh token is ever spent here.
 type guest struct {

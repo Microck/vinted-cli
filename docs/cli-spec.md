@@ -133,7 +133,13 @@ a challenge page is exit 5.
   `session_id`, and a `cooldown` object while the site is paused after a block. It is
   offline. `--check` adds the engine's view (`engine`: status, last and next renewal, access
   token expiry, cookie count) and an authenticated call, reported as `session_valid` (exit 5
-  during a cooldown). A Profile saved by an older version reports `needs_login`. It also
+  during a cooldown). `session_stored` explicitly reports whether a managed session ID is
+  saved. Without `--check`, `logged_in` describes that local state; with `--check`, it is
+  true only when the authenticated call succeeds. A failed check keeps the stored Session
+  and includes `check_error`; it does not prove the credentials were rejected. A Galleton
+  `protocol_error` remains an HTTP 502 adapter/protocol failure (exit 7 on account commands),
+  not an authentication rejection. Public reads always use a guest jar, so `doctor` checks
+  site reachability independently of the stored Session. A Profile saved by an older version reports `needs_login`. It also
   shows `refresh_expires` and, when that is within 48 h and the renewal service is not
   installed, a `warning` (also printed on stderr; never with `VINTED_GALLETON_*` overrides,
   whose owner runs the engine); the exit code is unchanged.

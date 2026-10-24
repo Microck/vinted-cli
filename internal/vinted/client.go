@@ -34,7 +34,7 @@ type Client struct {
 	Debug io.Writer
 	// Notice receives one-off human hints.
 	Notice func(string)
-	// Account is the logged-in session; nil runs on a guest jar.
+	// Account is used only by authenticated requests; public reads use a guest jar.
 	Account Account
 	// Gate guards every request (cooldown, pacing, budget); see Gate.
 	Gate Gate
@@ -154,10 +154,10 @@ type response struct {
 func (c *Client) do(ctx context.Context, r request, out any) ([]byte, error) {
 	endpoint := r.method + " " + r.path
 	g := r.guest
-	if c.Account == nil && g == nil {
-		if r.auth {
-			return nil, &Error{Kind: KindAuth, Msg: "this command needs a logged-in profile. Run `vinted auth login`"}
-		}
+	if r.auth && c.Account == nil {
+		return nil, &Error{Kind: KindAuth, Msg: "this command needs a logged-in profile. Run `vinted auth login`"}
+	}
+	if !r.auth && g == nil {
 		var err error
 		if g, err = c.guestJar(ctx); err != nil {
 			return nil, err
@@ -173,7 +173,7 @@ func (c *Client) do(ctx context.Context, r request, out any) ([]byte, error) {
 	retry := false
 	switch {
 	case resp.status == http.StatusUnauthorized && !r.noToken:
-		if c.Account != nil {
+		if r.auth {
 			// The renewal is a request to Vinted of its own: gate it.
 			if c.Gate != nil {
 				if err := c.Gate.Wait(ctx); err != nil {
@@ -213,7 +213,7 @@ func (c *Client) do(ctx context.Context, r request, out any) ([]byte, error) {
 	return raw, nil
 }
 
-// guestJar is the anonymous jar public reads run on without an Account. It
+// guestJar is the anonymous jar public reads use even with a stored Account. It
 // comes from Tokens while its token is fresh and is otherwise minted from
 // the home page and cached for the next command.
 func (c *Client) guestJar(ctx context.Context) (*guest, error) {
@@ -316,7 +316,7 @@ func (c *Client) send(ctx context.Context, r request, g *guest) (response, error
 			}
 		}
 		c.debugf("> %s %s", method, c.redact(u))
-		status, respHeader, raw, err := c.transport(ctx, endpoint, method, u, header, body)
+		status, respHeader, raw, err := c.transport(ctx, r.auth, endpoint, method, u, header, body)
 		if err != nil {
 			return response{}, err
 		}
@@ -361,8 +361,8 @@ func redirectTarget(current, method string, status int, h http.Header) (string, 
 
 // transport puts one request on the wire: through the Account, which attaches
 // the account's cookies, or directly with the guest jar's.
-func (c *Client) transport(ctx context.Context, endpoint, method, u string, header http.Header, body []byte) (int, http.Header, []byte, error) {
-	if c.Account != nil {
+func (c *Client) transport(ctx context.Context, account bool, endpoint, method, u string, header http.Header, body []byte) (int, http.Header, []byte, error) {
+	if account {
 		return c.Account.Send(ctx, method, u, header, body)
 	}
 	var rd io.Reader
@@ -409,7 +409,7 @@ func (c *Client) csrfToken(ctx context.Context) (tok string, cached bool, err er
 			return tok, true, nil
 		}
 	}
-	raw, err := c.do(ctx, request{method: http.MethodGet, path: "/", html: true}, nil)
+	raw, err := c.do(ctx, request{method: http.MethodGet, path: "/", html: true, auth: c.Account != nil}, nil)
 	if err != nil {
 		return "", false, err
 	}

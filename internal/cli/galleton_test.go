@@ -453,3 +453,55 @@ func TestPendingSessionDeletionIsRetried(t *testing.T) {
 		t.Fatalf("credentials.toml still queues the deleted session:\n%s", raw)
 	}
 }
+
+// A terminal engine session must not capture public reads or erase the local
+// Profile. Exercise the actual pinned engine, not a replacement SDK mock.
+func TestProtocolErrorSessionDoesNotBlockPublicCommands(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+	before := decode[map[string]any](t, h.must("", "auth", "status").stdout)
+	h.fake.setBlock("/web/api/auth/refresh", &fakeBlock{status: http.StatusOK, body: []byte(`{}`)})
+	if r := h.run("", "auth", "refresh"); r.code != 7 || !strings.Contains(r.stderr, "protocol_error") {
+		t.Fatalf("refresh: exit %d %s", r.code, r.stderr)
+	}
+	h.fake.setBlock("", nil)
+	for _, args := range [][]string{
+		{"search", "pixel", "--limit", "1"}, {"category", "list"}, {"brand", "search", "nike"}, {"item", "show", "1000000001"},
+	} {
+		h.must("", args...)
+	}
+	status := decode[map[string]any](t, h.must("", "auth", "status", "--check").stdout)
+	engine, _ := status["engine"].(map[string]any)
+	if status["session_id"] != before["session_id"] || status["session_stored"] != true || status["logged_in"] != false || status["session_valid"] != false || engine["status"] != "protocol_error" || !strings.Contains(fmt.Sprint(status["check_error"]), "protocol_error") {
+		t.Fatalf("status: %#v", status)
+	}
+	r := h.run("", "doctor")
+	if r.code != 1 {
+		t.Fatalf("doctor: exit%d %s", r.code, r.stderr)
+	}
+	report := decode[struct {
+		Checks []struct {
+			Name   string
+			OK     bool
+			Detail string
+		}
+	}](t, r.stdout)
+	found := false
+	for _, check := range report.Checks {
+		if check.Name == "site reachable" {
+			found = true
+			if !check.OK {
+				t.Fatalf("guest reachability: %+v", check)
+			}
+		}
+		if check.Name == "session" && check.OK {
+			t.Fatal("stale session reported healthy")
+		}
+	}
+	if !found {
+		t.Fatal("site check missing")
+	}
+	if r := h.run("", "me", "show"); r.code != 7 {
+		t.Fatalf("account request must not become guest: exit%d %s", r.code, r.stderr)
+	}
+}

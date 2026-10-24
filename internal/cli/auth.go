@@ -169,14 +169,16 @@ func openCookieFile(path string) (*os.File, error) {
 }
 
 type authStatus struct {
-	Profile   string     `json:"profile"`
-	LoggedIn  bool       `json:"logged_in"`
-	Account   string     `json:"account,omitempty"`
-	UserID    int64      `json:"user_id,omitempty"`
-	Source    string     `json:"source,omitempty"`
-	SessionID string     `json:"session_id,omitempty"`
-	Domain    string     `json:"domain,omitempty"`
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	Profile       string     `json:"profile"`
+	LoggedIn      bool       `json:"logged_in"`
+	SessionStored bool       `json:"session_stored"`
+	CheckError    string     `json:"check_error,omitempty"`
+	Account       string     `json:"account,omitempty"`
+	UserID        int64      `json:"user_id,omitempty"`
+	Source        string     `json:"source,omitempty"`
+	SessionID     string     `json:"session_id,omitempty"`
+	Domain        string     `json:"domain,omitempty"`
+	UpdatedAt     *time.Time `json:"updated_at,omitempty"`
 	// Legacy is set for a profile an older vinted-cli saved; it needs a new login.
 	Legacy bool `json:"needs_login,omitempty"`
 	// RefreshExpires is when the login's refresh token expires, as imported.
@@ -208,6 +210,14 @@ func (s authStatus) Pretty(w io.Writer, color bool) {
 	switch {
 	case s.Legacy:
 		rows = append(rows, []string{"session", "saved by an older vinted-cli; run `vinted auth login` again"})
+	case !s.LoggedIn && s.SessionStored:
+		rows = append(rows, []string{"session", "stored, but the authenticated check did not succeed"})
+		if s.Engine != nil {
+			rows = append(rows, []string{"engine", s.Engine.Status})
+		}
+		if s.CheckError != "" {
+			rows = append(rows, []string{"check error", s.CheckError})
+		}
 	case !s.LoggedIn:
 		rows = append(rows, []string{"session", "none (run `vinted auth login`)"})
 	default:
@@ -277,6 +287,13 @@ account from Vinted, which renews the access token first when it is due.`,
 			}
 			st := a.currentStatus()
 			st.Valid = &valid
+			st.LoggedIn = valid
+			if err != nil {
+				st.CheckError = "the authenticated session check could not be completed"
+				if errors.As(err, &ve) {
+					st.CheckError = ve.Msg
+				}
+			}
 			if merr == nil {
 				st.Engine = engineStateOf(meta)
 			}
@@ -298,6 +315,7 @@ func (a *App) currentStatus() authStatus {
 			st.Legacy = true
 			return st
 		}
+		st.SessionStored = true
 		st.LoggedIn, st.Source, st.SessionID, st.Account, st.UserID = true, "galleton", s.GalletonID, s.Login, s.UserID
 		st.UpdatedAt = timePtr(s.UpdatedAt)
 		st.RefreshExpires = timePtr(s.RefreshExpires)

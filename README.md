@@ -144,6 +144,8 @@ eligible interactive commands check for a new stable release at most once a day 
 | none | | `search`, `item show`, `user *`, `category list`, `brand search`, watches on public data |
 | session cookies | browser export via `auth login`, held by the session engine | favorites, own wardrobe, saved searches, chat, offers, managing your own items, `me *` |
 
+public reads always use an anonymous session, even when the selected profile has a stored account session. a stale or unavailable session engine does not block search, item or member reads. authenticated commands still require that profile and never fall back to anonymous requests. both paths keep the configured proxy, request pacing and shared cooldown.
+
 vinted gates some features behind its own account verification: chat (reading the inbox too), offers, reservations, favorites and every change to your own items answer code 115 until vinted has verified the account. the cli turns that into exit `3` with a link to the verification page. search, item and member pages, saved searches and watches work without it.
 
 ## staying unblocked
