@@ -31,8 +31,9 @@ The CLI uses a pinned Galleton daemon as its session engine, the same way wallap
 - `credentials.toml` holds only a session ID per profile, plus the account's id and login.
   After login the CLI process holds no cookie: `auth login` parses the export with Galleton's
   `cookiefile` package, narrows it to the site's origins and imports it; every account
-  request then goes through the daemon's managed request API. Guest (logged-out) reads keep
-  using an anonymous jar minted from the home page, which spends no refresh token.
+  request then goes through the daemon's managed request API. Public reads use an anonymous jar minted from the home page, even if the Profile has
+  a stored account Session. They spend no refresh token and do not consult the Session
+  engine. Authenticated reads and mutations never fall back to this guest path.
 - The adapter is generated: one provider per Vinted site (`vinted` for www.vinted.com,
   `vinted-fr`, ...), following galleton's `examples/adapters.vinted.json`. Renewal is
   `POST /web/api/auth/refresh` with the web app's own headers, both token cookies are

@@ -65,9 +65,9 @@ homebrew_casks:
     # unless the quarantine flag Homebrew sets on the download is removed.
     hooks:
       post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/vinted"]
+        install_steps: |
+          on_macos do
+            run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}/vinted"]
           end
 
 scoops:

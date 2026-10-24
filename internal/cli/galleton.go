@@ -209,9 +209,17 @@ func managedError(err error) error {
 		until = " until " + apiErr.RetryAt.Local().Format("2006-01-02 15:04 MST")
 	}
 	switch {
-	case apiErr.Code == "reauth_required" || apiErr.Code == "renewal_uncertain" || apiErr.Code == "protocol_error" || apiErr.Status == http.StatusNotFound:
+	case apiErr.Code == "reauth_required" || apiErr.Code == "renewal_uncertain":
 		e.Kind = vinted.KindAuth
 		e.Msg = "vinted rejected the stored session or a renewal could not be confirmed. Log in on the website, export the cookies again and run `vinted auth login`"
+	case apiErr.Code == "protocol_error":
+		e.Kind = vinted.KindAPIChanged
+		e.Msg = fmt.Sprintf("the session engine returned HTTP %d (protocol_error): the renewal response did not match its adapter; this is not a confirmed rejected login. Inspect the engine and its adapter before reconnecting", apiErr.Status)
+		e.Suggest = []string{"vinted auth service status", "vinted auth status --check"}
+	case apiErr.Status == http.StatusNotFound:
+		e.Kind = vinted.KindGeneric
+		e.Msg = "the session engine returned HTTP 404 (" + apiErr.Code + "): the requested session, provider or endpoint was not found; check the engine configuration and stored session ID"
+		e.Suggest = []string{"vinted auth service status", "vinted auth status"}
 	case apiErr.Code == "provider_paused":
 		e.Kind = vinted.KindBlocked
 		e.Msg = "the session engine is paused after a block by vinted's bot protection" + until + "; nothing is sent meanwhile. See `vinted cooldown`"
